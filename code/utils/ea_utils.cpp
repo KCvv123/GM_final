@@ -1,439 +1,345 @@
 //
 // Created by lj on 2022/11/9.
+// Rewritten for paper-faithful voxel-grid viewpoint candidates (Section 3.3.1)
 //
 
 #include "ea_utils.h"
 #include "compare.h"
 #include "ply_utils.h"
 #include "log.h"
+#include <algorithm>
+#include <cmath>
+#include <iostream>
 
+// =============================================================================
+// Paper Section 3.3.1: Voxel-grid candidate generation
+// Voxelize the OBB expanded by dmax; keep voxels whose nearest sample
+// distance is in [dmin, dmax].
+// =============================================================================
 
-std::default_random_engine EAUtils::e;
+std::vector<Eigen::Vector3f> EAUtils::generateVoxelCandidates(
+        Map &map, std::vector<SamplePoint> &points) {
 
-void EAUtils::initPopulation(ScoreUtils &scoreUtils,
-                             Map &map,int popSize,
-                             std::vector<std::vector<ViewPoint>> &population,
-                             std::vector<SamplePoint> &points) {
+    const float voxelSize = Params::VOXEL_SIZE;
+    const float dmin = Params::MIN_DISTANCE_BETWEEN_POINT_AND_VIEW;
+    const float dmax = Params::MAX_DISTANCE_BETWEEN_POINT_AND_VIEW;
+    const float dmin2 = dmin * dmin;
+    const float dmax2 = dmax * dmax;
 
-    std::vector<std::vector<ViewPoint>> allViewpoints;
-    allViewpoints.resize(points.size(), std::vector<ViewPoint>());
-    population.resize(Params::POP_SIZE);
+    // Expand OBB by dmax in all directions
+    Eigen::Vector3f halfExt = map.getOBBHalfExtents();
+    float ext0 = halfExt[0] + dmax;
+    float ext1 = halfExt[1] + dmax;
+    float ext2 = halfExt[2] + dmax;
 
-    std::vector<ViewPoint> allviewpoints2,finalviews;
-    for(int i=0; i<points.size(); i++){
-        Log::info("initialing the view of the " + std::to_string(i+1) + "th samplePoint");
-        std::vector<ViewPoint> viewPoints;
-        initViews(map,viewPoints, points[i]);
-        // 纠正高度
-        correctHeight(map,viewPoints, points[i]);  //对每个视角纠正高度
-//        std::cout<<std::to_string(i+1) + "th samplePoint's viewpoint nums:  "<<viewPoints.size()<<std::endl;
-        // 根据和法线的角度从小到大进行排序
-        std::sort(viewPoints.begin(), viewPoints.end(), Compare::compareViewPoint);
-        for(int j=0; j<viewPoints.size(); j++){
-            allViewpoints[i].push_back(std::move(viewPoints[j]));
-            allviewpoints2.push_back(std::move(viewPoints[j]));
-        }
+    // Number of voxels along each OBB axis
+    int n0 = (int)std::ceil(2.0f * ext0 / voxelSize);
+    int n1 = (int)std::ceil(2.0f * ext1 / voxelSize);
+    int n2 = (int)std::ceil(2.0f * ext2 / voxelSize);
+
+    std::cout << "[voxel] Grid: " << n0 << " x " << n1 << " x " << n2
+              << " = " << n0*n1*n2 << " voxels (before filtering)" << std::endl;
+
+    // Build sample position array for fast distance queries
+    int nSamples = (int)points.size();
+    std::vector<Eigen::Vector3f> samplePos(nSamples);
+    for (int i = 0; i < nSamples; i++) {
+        float *p = points[i].getPos();
+        samplePos[i] = Eigen::Vector3f(p[0], p[1], p[2]);
     }
-    selectViewPointByScore(scoreUtils,map,finalviews,points,allViewpoints,allviewpoints2);
 
-    population[0]=finalviews;
-    std::cout<<"population[0] size:"<<population[0].size()<<"***-----"<<std::endl;
+    std::vector<Eigen::Vector3f> candidates;
+    int totalChecked = 0;
 
-}
+    for (int i0 = 0; i0 < n0; i0++) {
+        float a0 = -ext0 + (i0 + 0.5f) * voxelSize;
+        for (int i1 = 0; i1 < n1; i1++) {
+            float a1 = -ext1 + (i1 + 0.5f) * voxelSize;
+            for (int i2 = 0; i2 < n2; i2++) {
+                float a2 = -ext2 + (i2 + 0.5f) * voxelSize;
+                totalChecked++;
 
-void EAUtils::normalGrowth(ViewPoint &vp, SamplePoint &samplePoint) {
-    float axisSum = abs(vp.getDirection()[0]) + abs(vp.getDirection()[1]) + abs(vp.getDirection()[2]);
-    float newPos[3];
-    // 计算新的pos[0]
-    if(vp.getDirection()[0] == 0){
-        newPos[0] = vp.getPos()[0];
-    }else if(vp.getDirection()[0] > 0){
-        newPos[0] = samplePoint.getPos()[0] - sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[0])/axisSum));
-    }else{
-        newPos[0] = samplePoint.getPos()[0] + sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[0])/axisSum));
-    }
-    // 计算新的pos[1]
-    if(vp.getDirection()[1] == 0){
-        newPos[1] = vp.getPos()[1];
-    }else if(vp.getDirection()[1] > 0){
-        newPos[1] = samplePoint.getPos()[1] - sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[1])/axisSum));
-    }else{
-        newPos[1] = samplePoint.getPos()[1] + sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[1])/axisSum));
-    }
-    // 计算新的pos[2]
-    if(vp.getDirection()[2] == 0){
-        newPos[2] = vp.getPos()[2];
-    }else if(vp.getDirection()[2] > 0){
-        newPos[2] = samplePoint.getPos()[2] - sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[2])/axisSum));
-    }else{
-        newPos[2] = samplePoint.getPos()[2] + sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[2])/axisSum));
-    }
-    vp.setPos(newPos);
-}
+                // Convert OBB-local coords to world
+                Eigen::Vector3f worldPos = map.obbToWorld(a0, a1, a2);
 
-void EAUtils::initViews(Map& map,std::vector<ViewPoint> &viewContainer, SamplePoint &sp) {
-    // samplepoint  sp
-    float *spPos = sp.getPos();
-    float *spDirection = sp.getDirection();
-    float levelDirection[3] = {spDirection[0], spDirection[1], 0};
-    float radian = PlyUtils::calRadianOfPoints(levelDirection, spDirection);
+                // Reject voxels below local terrain height
+                float terrainZ = map.getMinHeightOfPos(worldPos.x(), worldPos.y());
+                if (terrainZ <= -1.0f) terrainZ = 0.0f;  // out of bounds or no data
+                if (worldPos.z() < terrainZ) continue;
 
-    ViewPoint topView(sp.getPos()[0]+sp.getDirection()[0],
-                      sp.getPos()[1]+sp.getDirection()[1],
-                      sp.getPos()[2]+sp.getDirection()[2],
-                      -sp.getDirection()[0],
-                      -sp.getDirection()[1],
-                      -sp.getDirection()[2]);
-//    topView.angle=-M_PI;
-    normalGrowth(topView, sp);
-    viewContainer.push_back(topView);
+                // Find squared distance to nearest sample
+                float minDist2 = std::numeric_limits<float>::max();
+                for (int s = 0; s < nSamples; s++) {
+                    float d2 = (worldPos - samplePos[s]).squaredNorm();
+                    if (d2 < minDist2) minDist2 = d2;
+                    if (d2 < dmin2) break;  // too close, skip early
+                }
 
-    if(radian >= M_PI/6) {
-        // 初始化水平视角
-        Log::debug("level init");
-        initLevelView(viewContainer, sp);
-        // 以高度变化为准
-        float totalHeight = abs(topView.getPos()[2] - sp.getPos()[2]);
-        if (topView.getPos()[2] >= sp.getPos()[2]) {
-            for (float start = topView.getPos()[2] - 0.5; start >= sp.getPos()[2]; start -= 2) {
-                float ratio = 1 - (start - sp.getPos()[2]) / totalHeight;
-                int initViewNums = ceil(36 * ratio);
-                if (initViewNums < 3) {
-                    initViewNums = 3;
-                }
-                int addNum = 36 / initViewNums;
-                for (int i = 1; i <= 36; i += addNum) {
-                    float pos[3] = {topView.getPos()[0] + ratio * (viewContainer[i].getPos()[0] - topView.getPos()[0]),
-                                    topView.getPos()[1] + ratio * (viewContainer[i].getPos()[1] - topView.getPos()[1]),
-                                    topView.getPos()[2] + ratio * (viewContainer[i].getPos()[2] - topView.getPos()[2])};
-                    float direction[3] = {pos[0] - sp.getDirection()[0],
-                                          pos[1] - sp.getDirection()[1],
-                                          pos[2] - sp.getDirection()[2]};
-                    ViewPoint v(pos, direction);
-                    viewContainer.push_back(std::move(v));
-
-                }
-            }
-        } else {
-            for (float start = topView.getPos()[2]; start <= sp.getPos()[2]; start += 2) {
-                float ratio = 1 - (sp.getPos()[2] - start) / totalHeight;
-                int initViewNums = ceil(36 * ratio);
-                if (initViewNums < 3) {
-                    initViewNums = 3;
-                }
-                int addNum = 36 / initViewNums;
-                for (int i = 1; i <= 36; i += addNum) {
-                    float pos[3] = {topView.getPos()[0] + ratio * (viewContainer[i].getPos()[0] - topView.getPos()[0]),
-                                    topView.getPos()[1] + ratio * (viewContainer[i].getPos()[1] - topView.getPos()[1]),
-                                    topView.getPos()[2] + ratio * (viewContainer[i].getPos()[2] - topView.getPos()[2])};
-                    float direction[3] = {pos[0] - sp.getDirection()[0],
-                                          pos[1] - sp.getDirection()[1],
-                                          pos[2] - sp.getDirection()[2]};
-                    ViewPoint v(pos, direction);
-                    viewContainer.push_back(v);
-                }
-            }
-        }
-    }else {
-        Log::debug("vertical init");
-        initVerticalView(viewContainer, sp);
-        // 以y变化为准
-        float totalHeight = abs(topView.getPos()[1] - sp.getPos()[1]);
-        if(topView.getPos()[1] >= sp.getPos()[1]){
-            for(float start=topView.getPos()[1]-0.5; start>=sp.getPos()[1]; start-=2){
-                float ratio = 1-(start-sp.getPos()[1])/totalHeight; // 1-(视点y方向高度-样本点y方向高度)/y方向最大的高度
-                int initViewNums = ceil(36 * ratio);
-                if(initViewNums < 3){
-                    initViewNums = 3;
-                }
-                int addNum = 36 / initViewNums;
-                for(int i=1; i<=36; i+=addNum){
-                    float pos[3] = {topView.getPos()[0]+ratio*(viewContainer[i].getPos()[0]-topView.getPos()[0]),
-                                    topView.getPos()[1]+ratio*(viewContainer[i].getPos()[1]-topView.getPos()[1]),
-                                    topView.getPos()[2]+ratio*(viewContainer[i].getPos()[2]-topView.getPos()[2])};
-                    float direction[3] = {pos[0]-sp.getDirection()[0],
-                                          pos[1]-sp.getDirection()[1],
-                                          pos[2]-sp.getDirection()[2]};
-                    ViewPoint v(pos, direction);
-                    viewContainer.push_back(v);
-                }
-            }
-        }else{
-            for(float start=topView.getPos()[1]; start<=sp.getPos()[1]; start+=2){
-                float ratio = 1-(sp.getPos()[1]-start)/totalHeight;
-                int initViewNums = ceil(36 * ratio);
-                if(initViewNums < 3){
-                    initViewNums = 3;
-                }
-                int addNum = 36 / initViewNums;
-                for(int i=1; i<=36; i+=addNum){
-                    float pos[3] = {topView.getPos()[0]+ratio*(viewContainer[i].getPos()[0]-topView.getPos()[0]),
-                                    topView.getPos()[1]+ratio*(viewContainer[i].getPos()[1]-topView.getPos()[1]),
-                                    topView.getPos()[2]+ratio*(viewContainer[i].getPos()[2]-topView.getPos()[2])};
-                    float direction[3] = {pos[0]-sp.getDirection()[0],
-                                          pos[1]-sp.getDirection()[1],
-                                          pos[2]-sp.getDirection()[2]};
-                    ViewPoint v(pos, direction);
-                    viewContainer.push_back(v);
+                // Keep if dmin <= dist <= dmax
+                if (minDist2 >= dmin2 && minDist2 <= dmax2) {
+                    candidates.push_back(worldPos);
                 }
             }
         }
     }
 
+    std::cout << "[voxel] Candidates after distance filter: " << candidates.size()
+              << " / " << totalChecked << std::endl;
+
+    return candidates;
 }
 
-void EAUtils::initLevelView(std::vector<ViewPoint> &viewContainer, SamplePoint &samplePoint) {
-    float *pPos = samplePoint.getPos(); // 视点的世界坐标
-    float radian = getRandomFloatNumber(-2 * M_PI, 0);
+// =============================================================================
+// Paper Section 3.3.2: Quality-aware greedy viewpoint selection
+// Visibility must be precomputed via scoreUtils.updateVisibilityRayOnly()
+// before calling this function.
+// =============================================================================
 
-    for (int i = 0; i < 36; i++) {
-        float randD = getRandomFloatNumber(Params::MIN_DISTANCE_BETWEEN_POINT_AND_VIEW,
-                                           Params::MAX_DISTANCE_BETWEEN_POINT_AND_VIEW);
-        float currentRadian = radian - Params::PER_RADIAN * (float) i;
-        //计算视点的当前x坐标 v.x
-        float view_x = pPos[0] + randD * cos(currentRadian);
-        float view_y = 0;
-        if ((currentRadian >= -M_PI && currentRadian <= 0) ||
-            (currentRadian >= -3 * M_PI && currentRadian <= -2 * M_PI) ||
-            (currentRadian >= -5 * M_PI && currentRadian <= -4 * M_PI)) {
-            view_y = pPos[1] - sqrt(pow(randD, 2) - pow(std::min(randD, abs(view_x - pPos[0])), 2));
-        } else {
-            view_y = pPos[1] + sqrt(pow(randD, 2) - pow(std::min(randD, abs(view_x - pPos[0])), 2));
-        }
-        //同一高度下
-        ViewPoint viewPoint(view_x, view_y, pPos[2], view_x - pPos[0], view_y - pPos[1], 0);
-        viewContainer.push_back(viewPoint);
+// Helper: check if a viewpoint index is already in the selections list.
+static bool viewIdxAlreadySelected(int vIdx,
+                                   const std::vector<ViewSelection> &selections) {
+    for (const auto &sel : selections) {
+        if (sel.viewIdx == vIdx) return true;
     }
-
+    return false;
 }
 
-void EAUtils::initVerticalView(std::vector<ViewPoint> &viewContainer, SamplePoint &samplePoint) {
-    float *pPos = samplePoint.getPos();
-    // 获取一个随机弧度值*
-    float radian = getRandomFloatNumber(-2*M_PI, 0);
-
-    for(int i=0;i<36;i++){
-        float randD = getRandomFloatNumber(Params::MIN_DISTANCE_BETWEEN_POINT_AND_VIEW,
-                                           Params::MAX_DISTANCE_BETWEEN_POINT_AND_VIEW);
-        float currentRadian = radian - Params::PER_RADIAN * (float)i;
-        // 计算视角的x坐标 v.x
-        float view_x = pPos[0] + randD * cos(currentRadian);
-        float view_z = 0;
-        if((currentRadian >= -M_PI && currentRadian <= 0) ||
-           (currentRadian >= -3*M_PI && currentRadian <= -2*M_PI) ||
-           (currentRadian >= -5*M_PI && currentRadian <= -4*M_PI)){
-            view_z = pPos[2] - sqrt(pow(randD, 2) - pow(std::min(randD, abs(view_x - pPos[0])), 2));
-        }else{
-            view_z = pPos[2] + sqrt(pow(randD, 2) - pow(std::min(randD, abs(view_x - pPos[0])), 2));
-        }
-        ViewPoint viewPoint(view_x, pPos[1], view_z, view_x-pPos[0], 0, view_z-pPos[2]);
-        viewContainer.push_back(viewPoint);
-
+// Helper: voxel-adjacency test for global-stage exclusion (Paper §3.3.2).
+// 6-connected face-neighbours, with floating-point slack.
+static bool isAdjacentToAnySelected(int vIdx,
+                                    const std::vector<ViewSelection> &selections,
+                                    const std::vector<Eigen::Vector3f> &candidatePositions,
+                                    float adjDist2) {
+    if (vIdx < 0 || vIdx >= (int)candidatePositions.size()) return false;
+    const Eigen::Vector3f &p = candidatePositions[vIdx];
+    for (const auto &sel : selections) {
+        if (sel.viewIdx == vIdx) continue;
+        if (sel.viewIdx < 0 || sel.viewIdx >= (int)candidatePositions.size()) continue;
+        float d2 = (p - candidatePositions[sel.viewIdx]).squaredNorm();
+        if (d2 < adjDist2) return true;
     }
+    return false;
 }
 
-//高度修正
-void EAUtils::correctHeight(Map &map, std::vector<ViewPoint> &viewpoints, SamplePoint &samplePoint) {
-    for(ViewPoint& vp:viewpoints){
-        float distance = PlyUtils::calDistanceForPoint(vp, samplePoint);
-        if (distance<=25) {
-            // 所有分量的和
-            float axisSum = abs(vp.getPos()[0]) + abs(vp.getPos()[1]) + abs(vp.getPos()[2]);
-            float newPos[3];
-            // 计算新的pos[0]
-            if (vp.getDirection()[0] == 0) {
-                newPos[0] = vp.getPos()[0];
-            } else if (vp.getDirection()[0] > 0) {
-                newPos[0] = samplePoint.getPos()[0] -
-                            sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[0]) / axisSum));
-            } else {
-                newPos[0] = samplePoint.getPos()[0] +
-                            sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[0]) / axisSum));
-            }
-            // 计算新的pos[1]
-            if (vp.getDirection()[1] == 0) {
-                newPos[1] = vp.getPos()[1];
-            } else if (vp.getDirection()[1] > 0) {
-                newPos[1] = samplePoint.getPos()[1] -
-                            sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[1]) / axisSum));
-            } else {
-                newPos[1] = samplePoint.getPos()[1] +
-                            sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[1]) / axisSum));
-            }
-            // 计算新的pos[2]
-            if (vp.getDirection()[2] == 0) {
-                newPos[2] = vp.getPos()[2];
-            } else if (vp.getDirection()[2] > 0) {
-                newPos[2] = samplePoint.getPos()[2] -
-                            sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[2]) / axisSum));
-            } else {
-                newPos[2] = samplePoint.getPos()[2] +
-                            sqrt(pow(Params::BEST_DISTANCE, 2) * (abs(vp.getDirection()[2]) / axisSum));
-            }
+// Paper Section 3.3.2: mark samples near the trigger sample as scanned using
+// |d(v_l, s_j)| * sin(theta_fov / 2). This is the paper-literal alternative to
+// the Embree ray-visibility coverage map.
+static void markPaperFovCoverage(const ViewSelection &sel,
+                                 std::vector<int> &coverage,
+                                 std::vector<SamplePoint> &points,
+                                 const std::vector<Eigen::Vector3f> &candidatePositions) {
+    if (sel.viewIdx < 0 || sel.viewIdx >= (int)candidatePositions.size()) return;
+    if (sel.triggerSample < 0 || sel.triggerSample >= (int)points.size()) return;
 
-            vp.setPos(newPos);
-            if (vp.getPos()[2] < samplePoint.getPos()[2]) {
-                vp.setDirectionByIndex(2, 0);
-            }
-        }  // end of dis<25
+    const Eigen::Vector3f &vPos = candidatePositions[sel.viewIdx];
+    float *triggerPosRaw = points[sel.triggerSample].getPos();
+    Eigen::Vector3f triggerPos(triggerPosRaw[0], triggerPosRaw[1], triggerPosRaw[2]);
+    float radius = (vPos - triggerPos).norm()
+                   * std::sin((float)Params::FOV_H * (float)M_PI / 180.0f / 2.0f);
+    float radius2 = radius * radius;
 
-        correctByHeightMap(map, samplePoint, vp);
-        if(vp.getPos()[2] < samplePoint.getPos()[2]){
-            vp.setDirectionByIndex(2, 0);
+    for (int i = 0; i < (int)points.size(); ++i) {
+        float *pRaw = points[i].getPos();
+        Eigen::Vector3f p(pRaw[0], pRaw[1], pRaw[2]);
+        if ((p - triggerPos).squaredNorm() <= radius2) {
+            coverage[i]++;
         }
-
-        float direction[3] = {
-                    vp.getPos()[0] - samplePoint.getPos()[0],
-                    vp.getPos()[1] - samplePoint.getPos()[1],
-                    vp.getPos()[2] - samplePoint.getPos()[2]};
-        vp.angle = PlyUtils::radian2angle(PlyUtils::calRadianOfPoints(direction, samplePoint.getDirection()));
     }
 }
 
-//
-void EAUtils::correctByHeightMap(Map &map, SamplePoint &samplePoint, ViewPoint &viewPoint) {
-    int row = ceil((viewPoint.getPos()[0] + map.getXOffset()) / map.getXResolution());
-    int col = ceil((viewPoint.getPos()[1] + map.getYOffset()) / map.getYResolution());
-    if(row >= 0 && row < map.getMapWidth() && col >= 0 && col < map.getMapHeight()){
-        // 坐标在范围之内
-        if(viewPoint.getPos()[2] < map.getMapData(row, col) + 6){
-            viewPoint.setPosByIndex(2, 6);
-        }
-    }else{
-        // 坐标在范围之外，最起码要比最低距离高
-        viewPoint.setPosByIndex(2, std::max(12.0f, viewPoint.getPos()[2]));
-    }
-    viewPoint.setDirection(new float[3]{samplePoint.getPos()[0] - viewPoint.getPos()[0],
-                                        samplePoint.getPos()[1] - viewPoint.getPos()[1],
-                                        samplePoint.getPos()[2] - viewPoint.getPos()[2]});
-}
-
-//随机浮点数
-float EAUtils::getRandomFloatNumber(float minValue, float maxValue) {
-    // 设置随机数分布
-    std::uniform_real_distribution<float> u(minValue, maxValue);
-    return u(e);
-}
-
-void EAUtils::selectViewPointByScore(ScoreUtils &scoreUtils, Map &map,
-                                     std::vector<ViewPoint> &finalViews,
+void EAUtils::selectViewPointByScore(ScoreUtils &scoreUtils,
+                                     std::vector<ViewSelection> &finalSelections,
                                      std::vector<SamplePoint> &points,
-                                     std::vector<std::vector<ViewPoint>> &allViewpoints,
-                                     std::vector<ViewPoint> &viewpoints) {
-    // finalviews 最终视点
-    // points 采样点
-    // allviewpoints 每个采样点视角的集合
-    // viewpoints 所有视角的集合
-    // 更新可见情况
-    scoreUtils.setTrajectory(viewpoints);//设置所有视点
-    scoreUtils.updateVisibility();//更新视角可见性集合
-    std::cout<<viewpoints.size()<<std::endl;  // 152802 所有生成的初始视角
-    int len = points.size();
-    float cd,co;
-    float dom_2=pow(Params::BEST_DISTANCE - Params::MIN_DISTANCE_BETWEEN_POINT_AND_VIEW,2);
+                                     const std::vector<Eigen::Vector3f> &candidatePositions,
+                                     float qualityThreshold) {
+    int len = (int)points.size();
+    float dom_2 = pow(Params::BEST_DISTANCE - Params::MIN_DISTANCE_BETWEEN_POINT_AND_VIEW, 2);
+    const float cosThetaT = std::cos(Params::THETA_T);
+    const float thetaDelta = 1.0f - cosThetaT;
+    const float thetaDenom = std::max(thetaDelta * thetaDelta, 1e-6f);
 
+    // === LOCAL VIEWPOINT SELECTION (Paper §3.3.2) ===
+    // S_l = samples with quality < threshold; pick 1 best unchosen viewpoint per sample.
+    // High-quality samples get 0 local views — covered only by global stage.
+    int s_l_count = 0;
+    for (int i = 0; i < len; ++i) {
+        if (points[i].quality >= qualityThreshold) continue;  // S_l only
+        s_l_count++;
 
-    std::vector<int> finalviewIdx;
-    std::vector<ViewScore> finalViewscore;
-    int mark[500] = {0};//扫描标记
-    for (int i = 0; i < len/2; ++i) {  // len/2代表设的阈值为len/2处的这个采样点的质量分数，小于这个质量分数的点我们记为S_low
-//        std::cout<<"sp local view point size  "<<scoreUtils.pointViewVisibilitySet[i].size()<<std::endl;
         std::vector<ViewScore> score1;
-        for (int j = 0; j < scoreUtils.pointViewVisibilitySet[i].size(); ++j) {
-            int vIdx = scoreUtils.pointViewVisibilitySet[i][j];  //视点的序号
-//            std::cout<<vIdx<<" ";
-            float dis_ij = PlyUtils::calDistanceForPoint(points[i],viewpoints[vIdx]);
-            cd = 1-pow(dis_ij-Params::BEST_DISTANCE,2)/dom_2;
-            float ns[3] = {points[i].getDirection()[0],
-                           points[i].getDirection()[1],
-                           points[i].getDirection()[2]};
-            float dij[3] = {viewpoints[vIdx].getPos()[0]-points[i].getPos()[0],
-                            viewpoints[vIdx].getPos()[1]-points[i].getPos()[1],
-                            viewpoints[vIdx].getPos()[2]-points[i].getPos()[2]};
-//            std::cout<<dij[0]<<" "<<dij[1]<<" "<<dij[2]<<" "<<std::endl;
-            float dij_len = sqrt(pow(dij[0],2)+pow(dij[1],2)+pow(dij[2],2));
-            dij[0] = dij[0]/dij_len;
-            dij[1] = dij[1]/dij_len;
-            dij[2] = dij[2]/dij_len;
-            float nd = ns[0]*dij[0]+ns[1]*dij[1]+ns[2]*dij[2];
-            co = exp(-1*pow((1-nd),2));
-            ViewScore s(vIdx,i,1*cd*co);
+        for (int j = 0; j < (int)scoreUtils.pointViewVisibilitySet[i].size(); ++j) {
+            int vIdx = scoreUtils.pointViewVisibilitySet[i][j];
+            if (vIdx < 0 || vIdx >= (int)candidatePositions.size()) continue;
+
+            // Distance confidence c_d (Paper Eq 6)
+            float *pPos = points[i].getPos();
+            float dx = candidatePositions[vIdx].x() - pPos[0];
+            float dy = candidatePositions[vIdx].y() - pPos[1];
+            float dz = candidatePositions[vIdx].z() - pPos[2];
+            float dis_ij = std::sqrt(dx*dx + dy*dy + dz*dz);
+            float cd = 1.0f - pow(dis_ij - Params::BEST_DISTANCE, 2) / dom_2;
+            if (cd < 0.0f) cd = 0.0f;
+
+            // Orientation confidence c_o (Paper Eq 7)
+            float *ns = points[i].getDirection();
+            float dij[3] = {dx, dy, dz};
+            float dij_len = dis_ij;
+            if (dij_len < 1e-6f) continue;
+            dij[0] /= dij_len; dij[1] /= dij_len; dij[2] /= dij_len;
+            float nd = ns[0]*dij[0] + ns[1]*dij[1] + ns[2]*dij[2];
+            if (nd < cosThetaT) continue;
+            float co = exp(-1.0f * pow((1.0f - nd), 2) / thetaDenom);
+
+            ViewScore s(vIdx, i, cd * co);
             score1.emplace_back(std::move(s));
         }
 
-//        std::cout<<i<<"th sp  score1 size  "<<score1.size()<<std::endl;
-        sort(score1.begin(),score1.end(),Compare::compareByViewScoreFromBigToSmall);  //每个采样点和对应的视点的质量分数大到小排序
+        sort(score1.begin(), score1.end(), Compare::compareByViewScoreFromBigToSmall);
 
-        int count1 = 0,count = 0;
-        int existViewIdx[2];
-        for (int k = 0; k < score1.size(); ++k) {
-            if (count==2) break;
-//            if (count1==2) break;
-
-            if (std::find(finalviewIdx.begin(),finalviewIdx.end(),score1[k].viewIndex)==finalviewIdx.end()){
-                finalviewIdx.push_back(score1[k].viewIndex);  //存放视角的索引
-                finalViewscore.push_back(score1[k]);          //存放score，里面包含了spIdx和对应的vpIdx
-                count++;
-            }  //这一步这里是把分数高的两个点给放入finalviewIdx中，但是这可能会导致视角的冗余，因为同一个视角可能会观察到多个采样点，所以这里面一开始写的不是很合理?
-
-/*            //但是打印count1之后又全是0...
-//            if (std::find(finalviewIdx.begin(),finalviewIdx.end(),score1[k].viewIndex)!=finalviewIdx.end()){
-//                existViewIdx[count1]=score1[k].viewIndex;
-//                count1++;//如果在finalviews里面找到一个就排除加入一个
-//            }*/
+        for (int k = 0; k < (int)score1.size(); ++k) {
+            if (!viewIdxAlreadySelected(score1[k].viewIndex, finalSelections)) {
+                finalSelections.push_back({score1[k].viewIndex, i});
+                break;  // 1 viewpoint per S_l sample
+            }
         }
-
-    }  //end of for local view
-    std::cout<<"final local view point size  "<<finalviewIdx.size()<<std::endl;
-    std::cout<<" point size  "<<len<<std::endl;
-    std::cout<<" ----------------------  "<<std::endl;
-    for (int l = 0; l < finalviewIdx.size(); ++l) {
-        finalViews.emplace_back(viewpoints[finalviewIdx[l]]);
     }
+    std::cout << "[select] S_l: " << s_l_count << " samples (1 view each)" << std::endl;
+    std::cout << "[select] Local viewpoints: " << finalSelections.size() << std::endl;
 
-    //计算localview覆盖范围
-    int sssss=0;
-    for (int l = 0; l < finalViews.size(); ++l) {
-        /*for (int m = 0; m < scoreUtils.viewPointVisibilitySet[l].size(); ++m) {
-            std::cout<<"view can see sample points:"<<scoreUtils.viewPointVisibilitySet[l][m]<<"  ";
+    // === GLOBAL VIEWPOINT SELECTION (Paper §3.3.2) ===
+    // All samples need scanned >= 2; exclude already-selected AND adjacent candidates
+    // (6-connected voxel neighbours) for spatial uniformity.
+    const int globalMinCov = 2;
+    const float adjThresh  = Params::VOXEL_SIZE * 1.1f;
+    const float adjDist2   = adjThresh * adjThresh;
+
+    std::vector<int> coverage(len, 0);
+    for (const auto &sel : finalSelections) {
+        if (Params::USE_PAPER_FOV_MARK) {
+            markPaperFovCoverage(sel, coverage, points, candidatePositions);
+        } else {
+            if (sel.viewIdx < 0 || sel.viewIdx >= (int)scoreUtils.viewPointVisibilitySet.size()) continue;
+            for (int pIdx : scoreUtils.viewPointVisibilitySet[sel.viewIdx]) {
+                if (pIdx >= 0 && pIdx < len) coverage[pIdx]++;
+            }
         }
-        sssss++;*/
-        std::cout<<"local view can see sample points num:"<<scoreUtils.viewPointVisibilitySet[l].size()<<std::endl;
-
     }
-//    std::cout<<sssss<<" final view size"<<finalViews.size()<<std::endl;
+    std::cout << "[select] Coverage mode: "
+              << (Params::USE_PAPER_FOV_MARK ? "paper FOV-radius mark" : "ray visibility")
+              << std::endl;
 
-    //有个疑问:样本点的mark标记可否用视角可见性集合大小来代替？前面在进行可见性判断的时候已经对每一个采样点每一个视角进行逐一的可见性判断了
-    //这里范围覆盖的计算是判断相邻的样本点是否也在该样本点所对应的视场角观察的范围内，那前面的步骤已经对每一个点每一个视角都进行一一组合计算过一次
-    //可见性判断了，应该不用在进行范围覆盖计算了吧？
-/**
-//     剩下1/5的采样点我们可以先比较视角可见性集合是否大于2，如果大于2在里面取寻找所有视角里面是否包含在finalview里面
-//    for (int spIdx = len*4/5; spIdx < len; ++spIdx) {
-//       int view_nums = scoreUtils.pointViewVisibilitySet[spIdx].size();
-//        if (view_nums>=2){
-//            for (int j = 0; j < view_nums; ++j) {
-//
-//            }
-//        }
-//    }
-*/
+    int globalAdded = 0;
+    for (int i = 0; i < len; ++i) {
+        if (coverage[i] >= globalMinCov) continue;
+        int needed = globalMinCov - coverage[i];
 
+        std::vector<ViewScore> score1;
+        for (int j = 0; j < (int)scoreUtils.pointViewVisibilitySet[i].size(); ++j) {
+            int vIdx = scoreUtils.pointViewVisibilitySet[i][j];
+            if (vIdx < 0 || vIdx >= (int)candidatePositions.size()) continue;
 
-    /**
-//    std::cout<<"---------------------------------------------------"<<std::endl;
-    int i;
-    int zero_nums = 0;
-    for ( i = 0; i < points.size(); ++i) {
-//        std::cout<<scoreUtils.viewPointVisibilitySet[i].size()<<std::endl;
-//        std::cout<<scoreUtils.pointViewVisibilitySet[i].size()<<std::endl;
-        if (scoreUtils.pointViewVisibilitySet[i].size()==0){
-            zero_nums++;
+            float *pPos = points[i].getPos();
+            float dx = candidatePositions[vIdx].x() - pPos[0];
+            float dy = candidatePositions[vIdx].y() - pPos[1];
+            float dz = candidatePositions[vIdx].z() - pPos[2];
+            float dis_ij = std::sqrt(dx*dx + dy*dy + dz*dz);
+            float cdval = 1.0f - pow(dis_ij - Params::BEST_DISTANCE, 2) / dom_2;
+            if (cdval < 0.0f) cdval = 0.0f;
+
+            float *ns = points[i].getDirection();
+            float dij[3] = {dx, dy, dz};
+            float dij_len = dis_ij;
+            if (dij_len < 1e-6f) continue;
+            dij[0] /= dij_len; dij[1] /= dij_len; dij[2] /= dij_len;
+            float nd = ns[0]*dij[0] + ns[1]*dij[1] + ns[2]*dij[2];
+            if (nd < cosThetaT) continue;
+            float co = exp(-1.0f * pow((1.0f - nd), 2) / thetaDenom);
+
+            ViewScore s(vIdx, i, cdval * co);
+            score1.emplace_back(std::move(s));
         }
-//        std::cout<<allViewpoints[i].size()<<std::endl;
-    }
-    std::cout<<i<<std::endl;
-    std::cout<<"zero_nums:  "<<zero_nums<<std::endl;
-    std::cout<<"finsh....";
-*/
+        sort(score1.begin(), score1.end(), Compare::compareByViewScoreFromBigToSmall);
 
+        int added = 0;
+        for (int k = 0; k < (int)score1.size() && added < needed; ++k) {
+            int vIdx = score1[k].viewIndex;
+            if (viewIdxAlreadySelected(vIdx, finalSelections)) continue;
+            if (isAdjacentToAnySelected(vIdx, finalSelections, candidatePositions, adjDist2)) continue;
+            ViewSelection selected{vIdx, i};
+            finalSelections.push_back(selected);
+            if (Params::USE_PAPER_FOV_MARK) {
+                markPaperFovCoverage(selected, coverage, points, candidatePositions);
+            } else {
+                if (vIdx >= 0 && vIdx < (int)scoreUtils.viewPointVisibilitySet.size()) {
+                    for (int pIdx : scoreUtils.viewPointVisibilitySet[vIdx]) {
+                        if (pIdx >= 0 && pIdx < len) coverage[pIdx]++;
+                    }
+                }
+            }
+            added++;
+            globalAdded++;
+        }
+    }
+    std::cout << "[select] Global viewpoints added: " << globalAdded << std::endl;
+    std::cout << "[select] Total viewpoints: " << finalSelections.size() << std::endl;
+}
+
+// =============================================================================
+// Convert selections to ViewPoints. Orientation is bound to the trigger sample
+// recorded at selection time (Paper Section 3.3.2).
+// =============================================================================
+
+std::vector<ViewPoint> EAUtils::selectionsToViewPoints(
+        const std::vector<ViewSelection> &selections,
+        const std::vector<Eigen::Vector3f> &candidatePositions,
+        std::vector<SamplePoint> &points) {
+
+    std::vector<ViewPoint> result;
+    result.reserve(selections.size());
+
+    for (const auto &sel : selections) {
+        if (sel.viewIdx < 0 || sel.viewIdx >= (int)candidatePositions.size()) continue;
+        const Eigen::Vector3f &vPos = candidatePositions[sel.viewIdx];
+
+        if (sel.triggerSample >= 0 && sel.triggerSample < (int)points.size()) {
+            float *sPos = points[sel.triggerSample].getPos();
+            // INWARD direction: trigger sample - viewpoint (camera looks at the sample
+            // that triggered this selection — Paper 3.3.2 binds orientation to s_j)
+            float dirX = sPos[0] - vPos.x();
+            float dirY = sPos[1] - vPos.y();
+            float dirZ = sPos[2] - vPos.z();
+            result.emplace_back(vPos.x(), vPos.y(), vPos.z(), dirX, dirY, dirZ);
+        } else {
+            // Should not happen if selectViewPointByScore always sets a trigger sample.
+            result.emplace_back(vPos.x(), vPos.y(), vPos.z(), 0, 0, -1);
+        }
+    }
+    return result;
+}
+
+// =============================================================================
+// initPopulationWithContext — voxel grid candidates + ray-only visibility
+// =============================================================================
+
+EAContext EAUtils::initPopulationWithContext(ScoreUtils &scoreUtils, Map &map,
+                                            std::vector<SamplePoint> &points,
+                                            float qualityThreshold) {
+    EAContext ctx;
+
+    // Step 1: Generate voxel grid candidates (Paper 3.3.1)
+    ctx.candidatePositions = generateVoxelCandidates(map, points);
+
+    // Step 2: Compute ray-only visibility (no frustum check — Paper w_v)
+    std::cout << "[init] Computing ray-only visibility for "
+              << ctx.candidatePositions.size() << " candidates x "
+              << points.size() << " samples..." << std::endl;
+    scoreUtils.updateVisibilityRayOnly(ctx.candidatePositions);
+
+    // Step 3: Greedy selection with quality-aware S_high/S_low split
+    selectViewPointByScore(scoreUtils, ctx.greedySelections,
+                           points, ctx.candidatePositions, qualityThreshold);
+
+    std::cout << "[init] Greedy solution: " << ctx.greedySelections.size() << " viewpoints" << std::endl;
+
+    return ctx;
 }

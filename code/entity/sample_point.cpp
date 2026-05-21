@@ -32,10 +32,10 @@ void SamplePoint::printInfo() {
               << "], address:" << &this->_direction << "direction[" << this->_direction[0] << ", " << this->_direction[1] << ", " << this->_direction[2] << "]" << std::endl;
 }
 
-SamplePoint &SamplePoint::operator=(SamplePoint &sp) {
+SamplePoint &SamplePoint::operator=(const SamplePoint &sp) {
     for(int i=0; i<3; i++){
-        this->_pos[i] = sp.getPos()[i];
-        this->_direction[i] = sp.getDirection()[i];
+        this->_pos[i] = sp._pos[i];
+        this->_direction[i] = sp._direction[i];
     }
     this->quality=sp.quality;
     return *this;

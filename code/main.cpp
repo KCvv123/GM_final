@@ -26,39 +26,43 @@ typedef SurfaceMesh::Face_index FaceIndex;
 
 
 int main() {
-    std::cout << "Hello, World!" << std::endl;
-    //读取点云数据
+    std::cout << "FuXian Path Planning (117-paper)" << std::endl;
+
+    // Read sample points WITH quality (type=1: sorted ascending by quality internally)
     std::vector<SamplePoint> samplepoints;
-    IOUtils::readPlyFile(Params::SAMPLE_FILE_PATH,samplepoints,2);
-//    IOUtils::readPlyFile(Params::SAMPLE_FILE_PATH,samplepoints,1);
-//    std::sort(samplepoints.begin(),samplepoints.end(),Compare::spcompareByQuality);
+    IOUtils::readPlyFile(Params::SAMPLE_FILE_PATH, samplepoints, 1);
     int len = samplepoints.size();
-    float threshold = samplepoints[len*4/5].quality;
-//
-    std::vector<SamplePoint> meshPoints;  // 存储mesh模型中的所有vertex
-    std::vector<int*> faceIndexes;    // 存储每个face的三个顶点序号
+    float threshold = samplepoints[len * 4 / 5].quality;
+    std::cout << "[main] " << len << " sample points, quality threshold (80th pct) = " << threshold << std::endl;
+
+    // Read mesh for Embree ray tracing
+    std::vector<SamplePoint> meshPoints;
+    std::vector<int*> faceIndexes;
     IOUtils::readPlyForAll(Params::MESH_FILE_PATH, meshPoints, faceIndexes);
 
     ScoreUtils scoreUtils(faceIndexes, meshPoints, samplepoints);
     Map map(samplepoints);
     Log::setLog(true, true, false);
-    std::vector<std::vector<ViewPoint>> population;
-    std::vector<std::vector<float>> pointScoreInfo;  // 每个个体中每个视角的分数信息
-    pointScoreInfo.resize(Params::POP_SIZE, std::vector<float>(samplepoints.size(), 0));
 
-    std::vector<std::vector<std::vector<int>>> pointViewPopInfo; // 存储每个viewpoint可以看到的point序号 => [popIndex][viewIndex][pointIndex];
-    pointViewPopInfo.resize(Params::POP_SIZE, std::vector<std::vector<int>>(samplepoints.size(), std::vector<int>()));
+    std::cout << "[main] Generating candidates + greedy selection..." << std::endl;
 
-    std::vector<std::vector<std::vector<int>>> viewPointPopInfo;        // 存储每个point可以被viewpoint看到的序号 => [popIndex][pointIndex][viewIndex];
-    viewPointPopInfo.resize(Params::POP_SIZE, std::vector<std::vector<int>>(Params::TOTAL_VIEW_NUMS, std::vector<int>()));
+    // Generate candidate viewpoints + quality-aware greedy selection (Paper 3.3)
+    EAContext ctx = EAUtils::initPopulationWithContext(scoreUtils, map, samplepoints, threshold);
 
-    std::cout<<scoreUtils.points.size();
-    //front bingo
-    EAUtils::initPopulation(scoreUtils, map, Params::POP_SIZE, population, samplepoints);
-    std::cout<<population[0].size()<<"******"<<std::endl;
-    IOUtils::saveViewPoint("D:\\fuxianresult","20230130","xuexiao2",population[0]);
-    std::string savepath = "D:\\fuxianresult";
-    IOUtils::viewPointsToSmithPath(population[0],savepath);
-    std::cout<<" ";
+    // Convert greedy selections to ViewPoints; orientation bound to trigger sample (Paper 3.3.2)
+    std::vector<ViewPoint> bestViewpoints = EAUtils::selectionsToViewPoints(
+        ctx.greedySelections, ctx.candidatePositions, samplepoints);
+
+    // Output
+    const char* tag_env = std::getenv("FUXIAN_TAG");
+    std::string tag  = tag_env ? tag_env : "town01";
+    const char* name_env = std::getenv("FUXIAN_NAME");
+    std::string name = name_env ? name_env : "town01_viewpoints";
+
+    IOUtils::saveViewPoint("output", tag, name, bestViewpoints);
+    std::string savepath = "output";
+    IOUtils::viewPointsToSmithPath(bestViewpoints, savepath);
+
+    std::cout << "[main] Done. " << bestViewpoints.size() << " viewpoints saved." << std::endl;
     return 0;
 }

@@ -35,5 +35,5 @@ PosPack Tools::getPosPackFromDirectionVector(const float *vPos, const float *vDi
 }
 
 std::string Tools::makePath(const std::string &outputPath, const std::string &folderName, const std::string &fileName) {
-    return outputPath + "\\" + folderName + "\\" + fileName;
+    return outputPath + "/" + folderName + "/" + fileName;
 }

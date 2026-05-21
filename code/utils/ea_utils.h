@@ -5,39 +5,51 @@
 #ifndef FUXIAN_EA_UTILS_H
 #define FUXIAN_EA_UTILS_H
 
-#include <random>
+#include <Eigen/Dense>
 #include "score.h"
 #include "Params.h"
 #include "../entity/view_point.h"
 #include "../entity/sample_point.h"
 #include "../entity/map.h"
 
+// A selected viewpoint: position index + the sample that triggered its selection.
+// Paper 3.3.2: orientation o_i is bound to the sample that triggered the choice.
+struct ViewSelection {
+    int viewIdx;        // index into EAContext::candidatePositions
+    int triggerSample;  // index into points; defines viewpoint orientation (Paper 3.3.2)
+};
+
+struct EAContext {
+    std::vector<Eigen::Vector3f> candidatePositions;
+    std::vector<ViewSelection> greedySelections;
+};
+
 class EAUtils {
 public:
-    static std::default_random_engine e;
-    static void initPopulation(ScoreUtils &scoreUtils,
-                               Map &map,
-                               int popSize,
-                               std::vector<std::vector<ViewPoint>> &population,
-                               std::vector<SamplePoint>& points);
-    static void initViews(Map & map, std::vector<ViewPoint>& viewContainer, SamplePoint& samplePoint);
+    // Paper Section 3.3.1: voxel grid candidate generation
+    static std::vector<Eigen::Vector3f> generateVoxelCandidates(
+        Map &map, std::vector<SamplePoint> &points);
 
-    static void initLevelView(std::vector<ViewPoint> &viewContainer, SamplePoint& samplePoint);
-    static void initVerticalView(std::vector<ViewPoint> &viewContainer, SamplePoint& samplePoint);
+    // Quality-aware greedy selection (Paper Section 3.3.2)
+    // Each selection records both the viewpoint index AND the sample that triggered it,
+    // so orientation can be bound to that trigger sample (Paper 3.3.2).
+    static void selectViewPointByScore(ScoreUtils &scoreUtils,
+                                       std::vector<ViewSelection> &finalSelections,
+                                       std::vector<SamplePoint> &points,
+                                       const std::vector<Eigen::Vector3f> &candidatePositions,
+                                       float qualityThreshold);
 
-    static void normalGrowth(ViewPoint &viewPoint, SamplePoint &samplePoint);
+    // Build candidate pool + greedy solution + precomputed visibility
+    static EAContext initPopulationWithContext(ScoreUtils &scoreUtils, Map &map,
+                                              std::vector<SamplePoint> &points,
+                                              float qualityThreshold);
 
-    static float getRandomFloatNumber(float minValue, float maxValue);
-
-    static void correctHeight(Map &map, std::vector<ViewPoint> &viewpoints, SamplePoint& samplePoint);
-    static void correctByHeightMap(Map &map, SamplePoint& samplePoint, ViewPoint& viewPoint);
-
-    static void selectViewPointByScore(ScoreUtils &scoreUtils,Map &map,
-                                       std::vector<ViewPoint> &finalViews,
-                                       std::vector<SamplePoint>&points,
-                                       std::vector<std::vector<ViewPoint>> &allViewpoints,
-                                       std::vector<ViewPoint> &viewpoints);
-
+    // Convert selections to ViewPoints; orientation = sample - viewpoint position,
+    // where sample is the trigger sample bound at selection time.
+    static std::vector<ViewPoint> selectionsToViewPoints(
+        const std::vector<ViewSelection> &selections,
+        const std::vector<Eigen::Vector3f> &candidatePositions,
+        std::vector<SamplePoint> &points);
 };
 
 

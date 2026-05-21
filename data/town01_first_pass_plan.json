@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "globals": {
+    "map_name": "Town01",
+    "image_width": 1280,
+    "image_height": 720,
+    "fov": 90.0,
+    "quality_level": "Low",
+    "launch_server": true,
+    "server_host": "localhost",
+    "rpc_port": 2001,
+    "server_start_timeout_sec": 600,
+    "force_load_world": true
+  },
+  "defaults": {
+    "route_mode": "grid",
+    "grid_spacing_mode": "overlap",
+    "overlap_along": 0.70,
+    "overlap_side": 0.70,
+    "flight_height": 120.0,
+    "look_at_base": "fixed_angle",
+    "fixed_pitch": -90.0,
+    "fixed_yaw": 0.0,
+    "camera_pitch_deg": -90.0,
+    "fov": 90.0,
+    "image_width": 1280,
+    "image_height": 720,
+    "sweep_axis": "y",
+    "start_corner": "min_x_min_y",
+    "map_extent_margin": 20.0,
+    "auto_cover_max_frames": 500
+  },
+  "groups": [
+    {
+      "name": "first_pass_nadir_120m",
+      "enabled": true,
+      "route_mode": "grid",
+      "grid_spacing_mode": "overlap",
+      "overlap_along": 0.70,
+      "overlap_side": 0.70,
+      "flight_height": 120.0,
+      "look_at_base": "fixed_angle",
+      "fixed_pitch": -90.0,
+      "fixed_yaw": 0.0,
+      "camera_pitch_deg": -90.0
+    }
+  ]
+}

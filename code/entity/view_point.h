@@ -33,7 +33,7 @@ public:
     void buildCameraMatrix(float *pos, float *direction);
 
 
-    ViewPoint& operator=(ViewPoint& viewPoint);
+    ViewPoint& operator=(const ViewPoint& viewPoint);
     ViewPoint& operator=(ViewPoint&& viewPoint) noexcept ;
 
 

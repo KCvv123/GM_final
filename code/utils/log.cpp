@@ -42,7 +42,7 @@ struct tm Log::getCurrentTime() {
     struct tm tmInfo;
     time(&nowTime);
     // 将当前时间本地化，并保存在tmInfo中
-    localtime_s(&tmInfo, &nowTime);
+    localtime_r(&nowTime, &tmInfo);
     return tmInfo;
 }
 

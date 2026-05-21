@@ -6,8 +6,8 @@
 #include <iostream>
 #include <iomanip>
 #include <string>
-#include <io.h>
-#include <direct.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <cmath>
 #include "tinyply.h"
 #include "tools.h"
@@ -95,9 +95,9 @@ void IOUtils::saveViewPoint(const std::string &outputDir, const std::string &fol
                             std::vector<ViewPoint> viewpoints) {
     // 构造保存路径
 //    std::string savePath = outputDir + "\\" + folderName +  "\\" + std::to_string(i+1) + ".txt";
-    std::string savePath = outputDir + "\\" + folderName +  "\\" + filename + ".txt";
-    if(_access((outputDir + "\\" + folderName).c_str(), 0) == -1){
-        _mkdir((outputDir + "\\" + folderName).c_str());
+    std::string savePath = outputDir + "/" + folderName + "/" + filename + ".txt";
+    if(access((outputDir + "/" + folderName).c_str(), F_OK) != 0){
+        mkdir((outputDir + "/" + folderName).c_str(), 0755);
     }
     std::ofstream outputFile(savePath);
     if(outputFile.fail()){

@@ -29,7 +29,7 @@ public:
     void printInfo();
 
     //重载运算符=
-    SamplePoint& operator=(SamplePoint &sp);
+    SamplePoint& operator=(const SamplePoint &sp);
 };
 
 

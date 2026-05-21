@@ -72,7 +72,7 @@ void ViewPoint::printInfo() {
 }
 
 
-ViewPoint &ViewPoint::operator=(ViewPoint &viewPoint) {
+ViewPoint &ViewPoint::operator=(const ViewPoint &viewPoint) {
     this->setPos(viewPoint._pos);
     this->setDirection(viewPoint._direction);
     this->angle = viewPoint.angle;

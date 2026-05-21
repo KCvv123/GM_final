@@ -1,0 +1,26 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+
+# Generated data (large PLY meshes, dense clouds, samples)
+# Keep hand-crafted JSON capture plans (data/*_first_pass_plan.json)
+data/*.ply
+
+# Pipeline outputs (viewpoints, trajectories, intermediate text)
+output/
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp

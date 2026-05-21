@@ -7,7 +7,7 @@
 
 #include <vector>
 #include <Eigen/Geometry>
-#include <embree3/rtcore.h>
+#include <embree4/rtcore.h>
 #include <CGAL/Point_set_3.h>
 #include <CGAL/Surface_mesh.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -54,8 +54,13 @@ public:
 
 
     void computeVisibility();
+    void computeVisibilityRayOnly(const std::vector<Eigen::Vector3f> &candidatePositions);
     void updateVisibility();
+    void updateVisibilityRayOnly(const std::vector<Eigen::Vector3f> &candidatePositions);
     void setTrajectory(std::vector<ViewPoint> &trajectory);
+
+    bool isVisibleRayOnly(const float *viewPos, const float *pointPos,
+                          const RTCScene &scene, double maxDistance);
 
 
 };
