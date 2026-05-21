@@ -145,7 +145,7 @@ Paper does not specify (or only hand-waves) several values. Document the choice 
 | Parameter | Paper's specification | Current value / status |
 |---|---|---|
 | `θ_t` (orientation angle threshold, used in Eq 2 and Eq 7) | not given | 60° = π/3; assumption recorded in `Params*.h` |
-| Quality threshold (S_l membership cutoff) | not given; paper sorts ascending and "selects an ascending set whose score is lower than a pre-defined threshold" | currently 80th percentile (`main.cpp:35` `samplepoints[len * 4 / 5].quality`) — document as assumption |
+| Quality threshold (S_l membership cutoff) | not given; paper sorts ascending and "selects an ascending set whose score is lower than a pre-defined threshold". Paper Table 1 reports #Local ≈ 110-120 viewpoints per scene → S_l is a small minority. | 10th percentile (`main.cpp:35` `samplepoints[len / 10].quality`) — chosen to match paper's reported viewpoint counts. Produces ~210 total viewpoints on town01 (paper Building-1: 210; Building-2: 205). Was 80th percentile pre-2026-05-22 (produced 1581 viewpoints, 5-15× paper). |
 | Poisson-disk sampling radius `R` / quality neighbourhood radius | not given | sampling radius is derived from mesh area and `--num-samples`; quality `R` is `--quality-radius` (default 3.0 m) |
 | `VOXEL_SIZE` (view sampling space voxel) | not given | 10.0 (m) |
 | `dmin`, `dmax` (view sampling distance shell) | not given numerically; paper just says "specified safe distances" | 25 / 35 (m) |

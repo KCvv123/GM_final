@@ -32,8 +32,11 @@ int main() {
     std::vector<SamplePoint> samplepoints;
     IOUtils::readPlyFile(Params::SAMPLE_FILE_PATH, samplepoints, 1);
     int len = samplepoints.size();
-    float threshold = samplepoints[len * 4 / 5].quality;
-    std::cout << "[main] " << len << " sample points, quality threshold (80th pct) = " << threshold << std::endl;
+    // Paper §3.3.2: S_l = "ascending set whose score is lower than a pre-defined threshold".
+    // Paper Table 1 reports #Local ~110-120 viewpoints per scene → S_l is a small minority.
+    // 10th percentile chosen to match paper's Building-1/2/3, Real-1, City-1 viewpoint counts.
+    float threshold = samplepoints[len / 10].quality;
+    std::cout << "[main] " << len << " sample points, quality threshold (10th pct) = " << threshold << std::endl;
 
     // Read mesh for Embree ray tracing
     std::vector<SamplePoint> meshPoints;
