@@ -377,7 +377,8 @@ def compute_quality_scores(
         nbr_nrm = dense_normals[nbr_idx]
         n_i = sample_normals[i]
         d2 = np.sum((nbr_pos - sample_pos[i]) ** 2, axis=1)
-        w_pj = np.exp(-d2 / max(radius, 1e-12))
+        d = np.sqrt(d2)
+        w_pj = np.exp(-d / max(radius, 1e-12))
 
         grad = np.sum(w_pj[:, None] * nbr_nrm, axis=0)
         grad_norm = np.linalg.norm(grad)

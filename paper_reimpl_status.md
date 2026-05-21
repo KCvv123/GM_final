@@ -53,6 +53,7 @@ Last updated: 2026-05-06.
 - **Now:** implemented A3 approximation for Eq 1 plus verbatim Eq 2/3/4/5 structure:
   - `∇(s_i) ≈ Σ w(‖s_i − p_j‖) · n_pj_input`, normalized before the dot product with `n_i`
   - `w_i = (1 − (|N_i| − |Nmax|) / |Nmax|)^2`
+  - `w_pj = exp{-‖s_i - p_j‖₂ / R}` (Eq 3) — **fixed 2026-05-22**: previous code used squared distance `d² / R`, paper formula is Euclidean (non-squared). Effective neighbourhood radius was ~½ of paper's at R=3.0.
   - `g_s = Σ w_pj · exp{-(1 − N_pj · n_i)^2 / (1 − cos θ_t)^2}`
   - `g = g_c · g_s`, then Eq 5 min-max normalization to [0, 1]
 - **New CLI parameters:** `--quality-radius` controls neighbourhood radius `R`; `--theta-t-deg` controls `θ_t` and defaults to 60°.
