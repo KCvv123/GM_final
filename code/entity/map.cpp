@@ -98,12 +98,15 @@ void Map::initOBB(std::vector<SamplePoint> &points) {
 
 
 void Map::initBoundary(std::vector<SamplePoint> &points) {
+    // -FLT_MAX is the most-negative finite float; FLT_MIN is the smallest positive
+    // float (~1e-38) and would leave xMax/yMax/zMax wrongly fixed at ~0 for scenes
+    // whose coordinates never exceed ~1e-38, masking a non-positive scene extent.
     this->xMin = FLT_MAX;
-    this->xMax = FLT_MIN;
+    this->xMax = -FLT_MAX;
     this->yMin = FLT_MAX;
-    this->yMax = FLT_MIN;
+    this->yMax = -FLT_MAX;
     this->zMin = FLT_MAX;
-    this->zMax = FLT_MIN;
+    this->zMax = -FLT_MAX;
     for(SamplePoint& sp: points){
         xMin = std::min(sp.getPos()[0], xMin);
         xMax = std::max(sp.getPos()[0], xMax);
@@ -162,8 +165,12 @@ float Map::getMapData(int row, int col) {
 }
 
 float Map::getMinHeightOfPos(float xPos, float yPos) {
-    int row = ceil(xPos + xOffset) / xResolution;
-    int col = ceil(yPos + yOffset) / yResolution;
+    // Must match the cell-index formula used in initHeightMap (line 130-131):
+    // row = ceil((x + xOffset) / xResolution). Operator precedence makes the
+    // pre-fix form `ceil(x + xOffset) / xResolution` divide *after* the ceil,
+    // hitting a different (often off-by-one) cell.
+    int row = ceil((xPos + xOffset) / xResolution);
+    int col = ceil((yPos + yOffset) / yResolution);
     if(row >= 0 && row < mapWidth && col >= 0 && col < mapHeight){
         // 返回高度
         return heightMap[row][col];
