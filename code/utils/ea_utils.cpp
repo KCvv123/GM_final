@@ -432,10 +432,21 @@ void EAUtils::selectViewPointByConfidenceCoverage(
         return sortedH[idx];
     };
     int nAboveReq = 0, nAboveHalf = 0, nZero = 0;
-    for (float h : H) {
-        if (h >= hReq)         nAboveReq++;
-        if (h >= hReq * 0.5f)  nAboveHalf++;
-        if (h <= 0.0f)         nZero++;
+    int nStructural = 0, nAlgorithmic = 0;
+    for (int s = 0; s < nSamples; ++s) {
+        float h = H[s];
+        if (h >= hReq)        nAboveReq++;
+        if (h >= hReq * 0.5f) nAboveHalf++;
+        if (h <= 0.0f) {
+            nZero++;
+            // Partition uncovered samples: structural (no visible candidate at
+            // all — nothing any planner can do) vs algorithmic (visible
+            // candidates existed, CWC simply didn't pick them).
+            bool hasVisibleCand =
+                s < (int)scoreUtils.pointViewVisibilitySet.size() &&
+                !scoreUtils.pointViewVisibilitySet[s].empty();
+            if (hasVisibleCand) nAlgorithmic++; else nStructural++;
+        }
     }
     std::cout << "[cwc] Total selections: " << finalSelections.size() << "/" << budgetK << std::endl;
     std::cout << "[cwc] H(s) distribution over " << nSamples << " samples:" << std::endl;
@@ -446,6 +457,8 @@ void EAUtils::selectViewPointByConfidenceCoverage(
               << " (" << (100.0f * nAboveReq / nSamples) << "%)" << std::endl;
     std::cout << "  H >= H_req/2:               " << nAboveHalf << "/" << nSamples << std::endl;
     std::cout << "  H == 0 (uncovered):         " << nZero << "/" << nSamples << std::endl;
+    std::cout << "    of which structural (no visible candidate): " << nStructural << std::endl;
+    std::cout << "    of which algorithmic (CWC could have picked): " << nAlgorithmic << std::endl;
 }
 
 // =============================================================================
