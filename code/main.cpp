@@ -49,18 +49,29 @@ int main() {
 
     std::cout << "[main] Generating candidates + greedy selection..." << std::endl;
 
-    // Generate candidate viewpoints + quality-aware greedy selection (Paper 3.3)
-    EAContext ctx = EAUtils::initPopulationWithContext(scoreUtils, map, samplepoints, threshold);
+    // Method dispatch via env vars (course-improvement: confidence_coverage adds
+    // a budgeted submodular planner; default keeps the paper-faithful Yan two-stage).
+    const char* method_env = std::getenv("FUXIAN_METHOD");
+    std::string method = method_env ? method_env : "yan_two_stage";
+    const char* k_env = std::getenv("FUXIAN_K");
+    int budgetK = k_env ? std::atoi(k_env) : -1;
+    const char* hreq_env = std::getenv("FUXIAN_H_REQ");
+    float hReq = hreq_env ? (float)std::atof(hreq_env) : 2.0f;
+
+    // Generate candidate viewpoints + greedy selection (Paper 3.3 or proposal §3.2)
+    EAContext ctx = EAUtils::initPopulationWithContext(scoreUtils, map, samplepoints,
+                                                      threshold, method, budgetK, hReq);
 
     // Convert greedy selections to ViewPoints; orientation bound to trigger sample (Paper 3.3.2)
     std::vector<ViewPoint> bestViewpoints = EAUtils::selectionsToViewPoints(
         ctx.greedySelections, ctx.candidatePositions, samplepoints);
 
-    // Output
+    // Output. CWC method appends "_cwc" so baseline and proposal outputs co-exist.
     const char* tag_env = std::getenv("FUXIAN_TAG");
     std::string tag  = tag_env ? tag_env : "town01";
     const char* name_env = std::getenv("FUXIAN_NAME");
     std::string name = name_env ? name_env : "town01_viewpoints";
+    if (method == "confidence_coverage") name += "_cwc";
 
     IOUtils::saveViewPoint("output", tag, name, bestViewpoints);
     std::string savepath = "output";

@@ -151,8 +151,12 @@ void EAUtils::selectViewPointByScore(ScoreUtils &scoreUtils,
                                      std::vector<ViewSelection> &finalSelections,
                                      std::vector<SamplePoint> &points,
                                      const std::vector<Eigen::Vector3f> &candidatePositions,
-                                     float qualityThreshold) {
+                                     float qualityThreshold,
+                                     int budgetK) {
     int len = (int)points.size();
+    // budgetK > 0 enforces a hard cap on total selections, matched against the
+    // course-improvement CWC method so both planners spend the same view budget.
+    const bool hasBudget = (budgetK > 0);
     float dom_2 = pow(Params::BEST_DISTANCE - Params::MIN_DISTANCE_BETWEEN_POINT_AND_VIEW, 2);
     const float cosThetaT = std::cos(Params::THETA_T);
     const float thetaDelta = 1.0f - cosThetaT;
@@ -163,6 +167,7 @@ void EAUtils::selectViewPointByScore(ScoreUtils &scoreUtils,
     // High-quality samples get 0 local views — covered only by global stage.
     int s_l_count = 0;
     for (int i = 0; i < len; ++i) {
+        if (hasBudget && (int)finalSelections.size() >= budgetK) break;
         if (points[i].quality >= qualityThreshold) continue;  // S_l only
         s_l_count++;
 
@@ -230,8 +235,13 @@ void EAUtils::selectViewPointByScore(ScoreUtils &scoreUtils,
 
     int globalAdded = 0;
     for (int i = 0; i < len; ++i) {
+        if (hasBudget && (int)finalSelections.size() >= budgetK) break;
         if (coverage[i] >= globalMinCov) continue;
         int needed = globalMinCov - coverage[i];
+        if (hasBudget) {
+            int remaining = budgetK - (int)finalSelections.size();
+            if (needed > remaining) needed = remaining;
+        }
 
         std::vector<ViewScore> score1;
         for (int j = 0; j < (int)scoreUtils.pointViewVisibilitySet[i].size(); ++j) {
@@ -285,6 +295,160 @@ void EAUtils::selectViewPointByScore(ScoreUtils &scoreUtils,
 }
 
 // =============================================================================
+// Confidence-weighted coverage greedy (Course-improvement / Proposal §3.2).
+// Replaces the paper's binary scanned-count rule with a continuous deficit
+// objective. Picks the candidate that maximises Σ_s min(D(s), c(v,s)), where
+// D(s) = max(0, H_req - H(s)) and H(s) = Σ c(v,s) over already-picked views.
+// =============================================================================
+
+// Helper: c(v,s) = w_v · c_d · c_o (Yan Eq 8). visibility is already filtered
+// in the caller (only iterates over scoreUtils.viewPointVisibilitySet[v]), so
+// w_v = 1; returns 0 when distance shell or θ_t threshold rejects the pair.
+static float confidenceCvs(int vIdx, int sIdx,
+                           std::vector<SamplePoint> &points,
+                           const std::vector<Eigen::Vector3f> &candidatePositions,
+                           float dom2, float cosThetaT, float thetaDenom) {
+    float *pPos = points[sIdx].getPos();
+    float dx = candidatePositions[vIdx].x() - pPos[0];
+    float dy = candidatePositions[vIdx].y() - pPos[1];
+    float dz = candidatePositions[vIdx].z() - pPos[2];
+    float dis = std::sqrt(dx*dx + dy*dy + dz*dz);
+    if (dis < 1e-6f) return 0.0f;
+
+    float cd = 1.0f - std::pow(dis - Params::BEST_DISTANCE, 2) / dom2;
+    if (cd <= 0.0f) return 0.0f;
+
+    float invDis = 1.0f / dis;
+    float ndx = dx * invDis, ndy = dy * invDis, ndz = dz * invDis;
+    float *ns = points[sIdx].getDirection();
+    float nd = ns[0]*ndx + ns[1]*ndy + ns[2]*ndz;
+    if (nd < cosThetaT) return 0.0f;
+
+    float co = std::exp(-1.0f * std::pow(1.0f - nd, 2) / thetaDenom);
+    return cd * co;
+}
+
+void EAUtils::selectViewPointByConfidenceCoverage(
+        ScoreUtils &scoreUtils,
+        std::vector<ViewSelection> &finalSelections,
+        std::vector<SamplePoint> &points,
+        const std::vector<Eigen::Vector3f> &candidatePositions,
+        int budgetK,
+        float hReq) {
+    const int nSamples = (int)points.size();
+    const int nCands   = (int)candidatePositions.size();
+    const float dom2 = std::pow(Params::BEST_DISTANCE - Params::MIN_DISTANCE_BETWEEN_POINT_AND_VIEW, 2);
+    const float cosThetaT = std::cos(Params::THETA_T);
+    const float thetaDelta = 1.0f - cosThetaT;
+    const float thetaDenom = std::max(thetaDelta * thetaDelta, 1e-6f);
+
+    std::vector<float> H(nSamples, 0.0f);   // accumulated coverage Σ c(v,s)
+    std::vector<bool>  selected(nCands, false);
+
+    std::cout << "[cwc] Budget K=" << budgetK << ", H_req=" << hReq
+              << ", candidates=" << nCands << ", samples=" << nSamples << std::endl;
+
+    for (int step = 0; step < budgetK; ++step) {
+        int   bestV = -1;
+        float bestGain = 0.0f;
+        int   bestTriggerSample = -1;
+
+        // Reduce across threads: each thread keeps its own best, then combine.
+        #pragma omp parallel
+        {
+            int   tBestV = -1;
+            float tBestGain = 0.0f;
+            int   tBestTrig = -1;
+
+            #pragma omp for schedule(dynamic, 32) nowait
+            for (int v = 0; v < nCands; ++v) {
+                if (selected[v]) continue;
+                if (v >= (int)scoreUtils.viewPointVisibilitySet.size()) continue;
+                const auto &visSamples = scoreUtils.viewPointVisibilitySet[v];
+                if (visSamples.empty()) continue;
+
+                float gain = 0.0f;
+                int   candTrigger = -1;
+                float candTriggerC = -1.0f;
+                for (int s : visSamples) {
+                    if (s < 0 || s >= nSamples) continue;
+                    float c = confidenceCvs(v, s, points, candidatePositions,
+                                            dom2, cosThetaT, thetaDenom);
+                    if (c <= 0.0f) continue;
+                    float deficit = hReq - H[s];
+                    if (deficit < 0.0f) deficit = 0.0f;
+                    gain += (c < deficit) ? c : deficit;
+                    if (c > candTriggerC) { candTriggerC = c; candTrigger = s; }
+                }
+                if (gain > tBestGain) {
+                    tBestGain = gain;
+                    tBestV    = v;
+                    tBestTrig = candTrigger;
+                }
+            }
+            #pragma omp critical
+            {
+                if (tBestGain > bestGain) {
+                    bestGain = tBestGain;
+                    bestV    = tBestV;
+                    bestTriggerSample = tBestTrig;
+                }
+            }
+        }
+
+        if (bestV < 0 || bestGain <= 0.0f) {
+            std::cout << "[cwc] Stopping at step " << step
+                      << " — no further positive-gain candidates" << std::endl;
+            break;
+        }
+
+        finalSelections.push_back({bestV, bestTriggerSample});
+        selected[bestV] = true;
+        // Update H(s) with the new contributions from the chosen viewpoint.
+        for (int s : scoreUtils.viewPointVisibilitySet[bestV]) {
+            if (s < 0 || s >= nSamples) continue;
+            float c = confidenceCvs(bestV, s, points, candidatePositions,
+                                    dom2, cosThetaT, thetaDenom);
+            if (c > 0.0f) H[s] += c;
+        }
+
+        if ((step + 1) % 25 == 0 || step == budgetK - 1) {
+            std::cout << "[cwc] step " << (step + 1) << "/" << budgetK
+                      << "  picked v=" << bestV
+                      << "  marginal_gain=" << bestGain << std::endl;
+        }
+    }
+
+    // Diagnostics: H(s) distribution — used to verify H_req is in a meaningful
+    // range. If most samples sit far below H_req, H_req should be lowered (or
+    // c-values normalised) so the deficit term keeps biting.
+    std::vector<float> sortedH(H.begin(), H.end());
+    std::sort(sortedH.begin(), sortedH.end());
+    auto pct = [&](float p) -> float {
+        if (sortedH.empty()) return 0.0f;
+        int idx = (int)std::floor(p * (sortedH.size() - 1));
+        if (idx < 0) idx = 0;
+        if (idx >= (int)sortedH.size()) idx = (int)sortedH.size() - 1;
+        return sortedH[idx];
+    };
+    int nAboveReq = 0, nAboveHalf = 0, nZero = 0;
+    for (float h : H) {
+        if (h >= hReq)         nAboveReq++;
+        if (h >= hReq * 0.5f)  nAboveHalf++;
+        if (h <= 0.0f)         nZero++;
+    }
+    std::cout << "[cwc] Total selections: " << finalSelections.size() << "/" << budgetK << std::endl;
+    std::cout << "[cwc] H(s) distribution over " << nSamples << " samples:" << std::endl;
+    std::cout << "  min=" << pct(0.0f) << "  p25=" << pct(0.25f)
+              << "  median=" << pct(0.5f) << "  p75=" << pct(0.75f)
+              << "  max=" << pct(1.0f) << std::endl;
+    std::cout << "  H >= H_req(" << hReq << "): " << nAboveReq << "/" << nSamples
+              << " (" << (100.0f * nAboveReq / nSamples) << "%)" << std::endl;
+    std::cout << "  H >= H_req/2:               " << nAboveHalf << "/" << nSamples << std::endl;
+    std::cout << "  H == 0 (uncovered):         " << nZero << "/" << nSamples << std::endl;
+}
+
+// =============================================================================
 // Convert selections to ViewPoints. Orientation is bound to the trigger sample
 // recorded at selection time (Paper Section 3.3.2).
 // =============================================================================
@@ -323,7 +487,10 @@ std::vector<ViewPoint> EAUtils::selectionsToViewPoints(
 
 EAContext EAUtils::initPopulationWithContext(ScoreUtils &scoreUtils, Map &map,
                                             std::vector<SamplePoint> &points,
-                                            float qualityThreshold) {
+                                            float qualityThreshold,
+                                            const std::string &method,
+                                            int budgetK,
+                                            float hReq) {
     EAContext ctx;
 
     // Step 1: Generate voxel grid candidates (Paper 3.3.1)
@@ -335,9 +502,25 @@ EAContext EAUtils::initPopulationWithContext(ScoreUtils &scoreUtils, Map &map,
               << points.size() << " samples..." << std::endl;
     scoreUtils.updateVisibilityRayOnly(ctx.candidatePositions);
 
-    // Step 3: Greedy selection with quality-aware S_high/S_low split
-    selectViewPointByScore(scoreUtils, ctx.greedySelections,
-                           points, ctx.candidatePositions, qualityThreshold);
+    // Step 3: Greedy selection — dispatch on method
+    std::cout << "[init] Selection method: " << method
+              << (budgetK > 0 ? "  (budget K=" + std::to_string(budgetK) + ")" : "")
+              << std::endl;
+    if (method == "confidence_coverage") {
+        if (budgetK <= 0) {
+            std::cerr << "[init] confidence_coverage requires a positive budget K"
+                      << " (set FUXIAN_K); falling back to 200." << std::endl;
+            budgetK = 200;
+        }
+        selectViewPointByConfidenceCoverage(scoreUtils, ctx.greedySelections,
+                                            points, ctx.candidatePositions,
+                                            budgetK, hReq);
+    } else {
+        // Default: paper-faithful Yan two-stage with optional K cap.
+        selectViewPointByScore(scoreUtils, ctx.greedySelections,
+                               points, ctx.candidatePositions,
+                               qualityThreshold, budgetK);
+    }
 
     std::cout << "[init] Greedy solution: " << ctx.greedySelections.size() << " viewpoints" << std::endl;
 

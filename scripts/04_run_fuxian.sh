@@ -69,8 +69,16 @@ echo ""
 
 FUXIAN_TAG="${MAP_LOWER}" FUXIAN_NAME="${MAP_LOWER}_viewpoints" ./build/FuXian
 
+# main.cpp appends "_cwc" to FUXIAN_NAME when FUXIAN_METHOD=confidence_coverage,
+# so the script must inspect the same suffixed file (or it would silently report
+# stats for the previous baseline run that happened to be sitting in the dir).
+SUFFIX=""
+if [[ "${FUXIAN_METHOD:-}" == "confidence_coverage" ]]; then
+    SUFFIX="_cwc"
+fi
+
 echo ""
-VIEWPOINTS_FILE="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints.txt"
+VIEWPOINTS_FILE="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints${SUFFIX}.txt"
 if [[ ! -f "$VIEWPOINTS_FILE" ]]; then
     echo "[ERROR] Output not found: $VIEWPOINTS_FILE"
     exit 1
