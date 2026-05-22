@@ -43,7 +43,15 @@ mkdir -p build
 (
     cd build
     cmake ../code -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake" 2>&1 | tail -5
-    make -j"$(nproc)" 2>&1 | grep -E "error|warning|Built|Linking" || true
+    # tee the full make output to a log so failures aren't lost when grep filters
+    # the on-screen output. PIPESTATUS[0] holds make's exit code (the trailing
+    # `|| true` only masks grep's "no match" exit so set -e doesn't fire on it).
+    make -j"$(nproc)" 2>&1 | tee /tmp/fuxian_build.log | grep -E "error|warning|Built|Linking" || true
+    make_exit="${PIPESTATUS[0]}"
+    if [ "$make_exit" -ne 0 ]; then
+        echo "[fuxian] Build FAILED (make exit=$make_exit). See /tmp/fuxian_build.log"
+        exit 1
+    fi
 )
 echo "[fuxian] Build done."
 
