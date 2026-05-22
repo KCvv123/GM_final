@@ -23,7 +23,9 @@
 #       Build: docker build -t gennbv-carla:0.9.16 \
 #                  <gennbv_blackwall>/engine/envs/carla/
 #   - vmlab-bin_colmap_38:latest Docker image  (for steps 2-4 & 9)
-#   - Python 3 with numpy  (for step 5)
+#   - Python 3 with numpy + scipy  (for step 5: scipy.spatial.cKDTree
+#       is used for Eq 1-5 quality scoring; opencv-python required for
+#       step 2 ORB key-image selection)
 #   - C++ build tools (cmake + make)  for step 6 (FuXian)
 #   - A running CARLA 0.9.16 server for steps 1 & 8 (launched by capturer)
 #
