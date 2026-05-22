@@ -42,16 +42,20 @@ echo "── Step 4b: Rebuild FuXian ──────────────�
 mkdir -p build
 (
     cd build
-    cmake ../code -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake" 2>&1 | tail -5
-    # tee the full make output to a log so failures aren't lost when grep filters
-    # the on-screen output. PIPESTATUS[0] holds make's exit code (the trailing
-    # `|| true` only masks grep's "no match" exit so set -e doesn't fire on it).
-    make -j"$(nproc)" 2>&1 | tee /tmp/fuxian_build.log | grep -E "error|warning|Built|Linking" || true
-    make_exit="${PIPESTATUS[0]}"
-    if [ "$make_exit" -ne 0 ]; then
-        echo "[fuxian] Build FAILED (make exit=$make_exit). See /tmp/fuxian_build.log"
+    cmake ../code -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake" > /tmp/fuxian_cmake.log 2>&1 \
+        || { tail -20 /tmp/fuxian_cmake.log; echo "[fuxian] cmake FAILED. See /tmp/fuxian_cmake.log"; exit 1; }
+    tail -5 /tmp/fuxian_cmake.log
+    # Run make WITHOUT piping so its exit status drives `set -e` directly.
+    # An earlier version piped through `tee | grep ... || true` and read
+    # PIPESTATUS[0], but `|| true` runs as a new pipeline and overwrites
+    # PIPESTATUS, masking make failures (verified 2026-05-23 — would silently
+    # re-use the stale ./build/FuXian binary).
+    if ! make -j"$(nproc)" > /tmp/fuxian_build.log 2>&1; then
+        echo "[fuxian] Build FAILED. Last lines of /tmp/fuxian_build.log:"
+        tail -30 /tmp/fuxian_build.log
         exit 1
     fi
+    grep -E "error|warning|Built|Linking" /tmp/fuxian_build.log || true
 )
 echo "[fuxian] Build done."
 
