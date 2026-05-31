@@ -50,12 +50,23 @@ GENNBV_ROOT="${GENNBV_ROOT:-$(dirname "$REPO")/gennbv_blackwall}"
 CARLA_IMAGE="${CARLA_IMAGE:-gennbv-carla:0.9.16}"
 GPU="${GPU:-0}"
 
+# Per-method output suffix. Defined here (not inside Step 7) so that
+# START_STEP=8 with FUXIAN_METHOD=confidence_coverage reads the correct
+# CWC plan from Step 7's earlier run instead of a stale Yan plan, and so
+# CARLA captures and the COLMAP final reconstruction land in their own
+# dirs per planner instead of overwriting each other.
+METHOD_SUFFIX=""
+case "${FUXIAN_METHOD:-yan_two_stage}" in
+    confidence_coverage) METHOD_SUFFIX="_cwc" ;;
+    binary_coverage)     METHOD_SUFFIX="_bc"  ;;
+esac
+
 FIRST_PASS_DIR="$DATA_ROOT/first_pass"
 COLMAP_FIRST_DIR="$DATA_ROOT/colmap_first_pass"
-SECOND_PASS_DIR="$DATA_ROOT/second_pass"
-COLMAP_SECOND_DIR="$DATA_ROOT/colmap_second_pass"
-SECOND_PASS_PLAN="$DATA_ROOT/second_pass_plan.json"
-COLMAP_COMBINED_DIR="$DATA_ROOT/colmap_combined"
+SECOND_PASS_DIR="$DATA_ROOT/second_pass${METHOD_SUFFIX}"
+COLMAP_SECOND_DIR="$DATA_ROOT/colmap_second_pass${METHOD_SUFFIX}"
+SECOND_PASS_PLAN="$DATA_ROOT/second_pass_plan${METHOD_SUFFIX}.json"
+COLMAP_COMBINED_DIR="$DATA_ROOT/colmap_combined${METHOD_SUFFIX}"
 
 print_step() {
     echo ""
@@ -237,14 +248,8 @@ fi
 if ! skip_step 7; then
     print_step 7 "ACO path planning + Bezier smoothing → CARLA second-pass plan"
 
-    # Step 6 (FuXian) writes a method-suffixed file. Match the suffix here so
-    # ACO and the CARLA plan converter consume the planner's actual output
-    # instead of a stale unrelated file that happens to share the default name.
-    METHOD_SUFFIX=""
-    case "${FUXIAN_METHOD:-yan_two_stage}" in
-        confidence_coverage) METHOD_SUFFIX="_cwc" ;;
-        binary_coverage)     METHOD_SUFFIX="_bc" ;;
-    esac
+    # METHOD_SUFFIX is computed once at the top of the script so START_STEP=8
+    # also picks up the right plan; here we just reuse it.
     RAW_VIEWPOINTS="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints${METHOD_SUFFIX}.txt"
     ACO_VIEWPOINTS="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints${METHOD_SUFFIX}_aco.txt"
     ACO_SMOOTH_VIEWPOINTS="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints${METHOD_SUFFIX}_aco_smooth.txt"
@@ -270,9 +275,7 @@ if ! skip_step 7; then
     # selected viewpoints into 837 capture poses and break the budget-matched
     # comparison promised by proposal §3.1 ("exactly K second-pass camera poses").
     # The Bezier outputs are still produced above for trajectory visualisation.
-    # Also suffix the plan path by method so Yan / binary_coverage / CWC runs
-    # don't overwrite each other (Step 8 inherits this updated value).
-    SECOND_PASS_PLAN="$DATA_ROOT/second_pass_plan${METHOD_SUFFIX}.json"
+    # SECOND_PASS_PLAN is already method-suffixed at the top of the script.
     python3 scripts/05_fuxian_to_carla_plan.py \
         --input  "$ACO_VIEWPOINTS" \
         --output "$SECOND_PASS_PLAN" \

@@ -82,7 +82,12 @@ case "${FUXIAN_METHOD:-}" in
 esac
 
 echo ""
-VIEWPOINTS_FILE="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints${SUFFIX}.txt"
+# Mirror main.cpp's filename construction: it concatenates
+# ${FUXIAN_NAME or default}${SUFFIX}. Hard-coding the default here was wrong
+# when the caller overrode FUXIAN_NAME (the check inspected a stale file
+# under the default name, while FuXian itself wrote to the custom name).
+OUTPUT_NAME="${FUXIAN_NAME:-${MAP_LOWER}_viewpoints}"
+VIEWPOINTS_FILE="output/${MAP_LOWER}/${OUTPUT_NAME}${SUFFIX}.txt"
 if [[ ! -f "$VIEWPOINTS_FILE" ]]; then
     echo "[ERROR] Output not found: $VIEWPOINTS_FILE"
     exit 1
