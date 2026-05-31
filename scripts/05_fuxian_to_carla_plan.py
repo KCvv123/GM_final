@@ -179,8 +179,13 @@ def main() -> None:
               flush=True)
 
     # ---- Build CARLA plan ---------------------------------------------------
-    # Each group uses look_at_base="per_waypoint" with extended waypoint format
-    # [x, y, pitch, yaw] so every viewpoint keeps its exact orientation.
+    # gennbv route.py expects waypoints as [x, y] (2-tuples) and
+    # orientation.py supports look_at_base in {down, forward, target,
+    # fixed_angle} — no per_waypoint. We therefore emit one viewpoint per
+    # group (--one-group-per-waypoint), lift each viewpoint's pitch/yaw to
+    # group-level fixed_pitch/fixed_yaw, and set look_at_base="fixed_angle".
+    # With one waypoint per group, fixed_angle is information-lossless vs the
+    # pre-fix per_waypoint format.
     plan_groups = []
     group_keys = list(groups.keys()) if (args.preserve_order or args.one_group_per_waypoint) \
         else sorted(groups, key=lambda k: abs(k))
@@ -193,10 +198,28 @@ def main() -> None:
         ordered = list(g) if (args.preserve_order or args.one_group_per_waypoint) \
             else _nearest_neighbour_order(g)
         waypoints = [
-            [round(v["x"], 3), round(v["y"], 3),
-             round(v["pitch_deg"], 2), round(v["yaw_deg"], 2)]
-            for v in ordered
+            [round(v["x"], 3), round(v["y"], 3)] for v in ordered
         ]
+
+        if args.one_group_per_waypoint:
+            # Lossless: 1 waypoint per group, take its exact pitch/yaw.
+            first = ordered[0]
+            fixed_pitch = round(first["pitch_deg"], 2)
+            fixed_yaw   = round(first["yaw_deg"], 2)
+        else:
+            # Multi-waypoint group with fixed_angle is approximate -- one
+            # (pitch, yaw) covers the whole group. We use the median.
+            pitches = sorted(v["pitch_deg"] for v in ordered)
+            yaws    = sorted(v["yaw_deg"]   for v in ordered)
+            fixed_pitch = round(pitches[len(pitches)//2], 2)
+            fixed_yaw   = round(yaws[len(yaws)//2], 2)
+            if len(ordered) > 1:
+                yaw_span = yaws[-1] - yaws[0]
+                if yaw_span > 1.0:
+                    print(f"[warn] Group {pitch_key!r} has {len(ordered)} waypoints "
+                          f"spanning {yaw_span:.1f}° in yaw; gennbv's fixed_angle "
+                          "uses one yaw for the whole group. Consider "
+                          "--one-group-per-waypoint for lossless emission.")
 
         group_name = f"fuxian_wp_{int(pitch_key):04d}" if args.one_group_per_waypoint \
             else f"fuxian_path_{int(pitch_key):04d}" if args.preserve_order \
@@ -208,7 +231,9 @@ def main() -> None:
             "waypoint_spacing_mode": "none",
             "waypoints":       waypoints,
             "flight_height":   round(flight_z, 2),
-            "look_at_base":    "per_waypoint",
+            "look_at_base":    "fixed_angle",
+            "fixed_pitch":     fixed_pitch,
+            "fixed_yaw":       fixed_yaw,
             "fov":             args.fov,
             "image_width":     args.width,
             "image_height":    args.height,
