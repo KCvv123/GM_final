@@ -57,6 +57,21 @@ public:
         int budgetK,
         float hReq);
 
+    // Binary-coverage greedy (Proposal Section 3.1 controlled baseline).
+    // Same submodular structure as CWC, but contribution per (v, s) pair is
+    //   1[v covers s] = 1 if s in viewPointVisibilitySet[v], 0 otherwise.
+    // B(s) = count of selected views covering s; B_req=2; deficit reduction.
+    // Required for a clean ablation that isolates "binary vs confidence-weighted"
+    // without also conflating it with "two-stage vs one-stage" (Yan two-stage
+    // would still differ from CWC by selection structure on top of coverage rule).
+    static void selectViewPointByBinaryCoverage(
+        ScoreUtils &scoreUtils,
+        std::vector<ViewSelection> &finalSelections,
+        std::vector<SamplePoint> &points,
+        const std::vector<Eigen::Vector3f> &candidatePositions,
+        int budgetK,
+        int bReq = 2);
+
     // Build candidate pool + greedy solution + precomputed visibility.
     // If method == "confidence_coverage", uses CWC; otherwise paper Yan two-stage.
     static EAContext initPopulationWithContext(ScoreUtils &scoreUtils, Map &map,

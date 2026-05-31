@@ -66,12 +66,16 @@ int main() {
     std::vector<ViewPoint> bestViewpoints = EAUtils::selectionsToViewPoints(
         ctx.greedySelections, ctx.candidatePositions, samplepoints);
 
-    // Output. CWC method appends "_cwc" so baseline and proposal outputs co-exist.
+    // Output. Suffix by method so the three planners' outputs co-exist:
+    //   yan_two_stage      -> <name>.txt           (paper-faithful baseline)
+    //   binary_coverage    -> <name>_bc.txt        (proposal §3.1 controlled baseline)
+    //   confidence_coverage-> <name>_cwc.txt       (proposal §3.2 method)
     const char* tag_env = std::getenv("FUXIAN_TAG");
     std::string tag  = tag_env ? tag_env : "town01";
     const char* name_env = std::getenv("FUXIAN_NAME");
     std::string name = name_env ? name_env : "town01_viewpoints";
-    if (method == "confidence_coverage") name += "_cwc";
+    if (method == "confidence_coverage")      name += "_cwc";
+    else if (method == "binary_coverage")     name += "_bc";
 
     IOUtils::saveViewPoint("output", tag, name, bestViewpoints);
     std::string savepath = "output";

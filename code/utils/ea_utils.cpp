@@ -397,9 +397,61 @@ void EAUtils::selectViewPointByConfidenceCoverage(
         }
 
         if (bestV < 0 || bestGain <= 0.0f) {
-            std::cout << "[cwc] Stopping at step " << step
-                      << " — no further positive-gain candidates" << std::endl;
-            break;
+            // Primary submodular objective exhausted (all reachable samples are
+            // already at H >= H_req). Fall back to "max Σ_s c(v,s)" (raw total
+            // confidence) so we still pick K poses, as Proposal §3.1 promises
+            // ("exactly K second-pass camera poses"). Phase B picks add no
+            // primary gain but maximise observation confidence among remaining
+            // unsaturated/edge samples.
+            int   fbBestV = -1;
+            float fbBestSum = 0.0f;
+            int   fbBestTrig = -1;
+            #pragma omp parallel
+            {
+                int   tBestV = -1;
+                float tBestSum = 0.0f;
+                int   tBestTrig = -1;
+                #pragma omp for schedule(dynamic, 32) nowait
+                for (int v = 0; v < nCands; ++v) {
+                    if (selected[v]) continue;
+                    if (v >= (int)scoreUtils.viewPointVisibilitySet.size()) continue;
+                    float sum = 0.0f;
+                    int trig = -1; float trigC = -1.0f;
+                    for (int s : scoreUtils.viewPointVisibilitySet[v]) {
+                        if (s < 0 || s >= nSamples) continue;
+                        float c = confidenceCvs(v, s, points, candidatePositions,
+                                                dom2, cosThetaT, thetaDenom);
+                        if (c <= 0.0f) continue;
+                        sum += c;
+                        if (c > trigC) { trigC = c; trig = s; }
+                    }
+                    if (sum > tBestSum) { tBestSum = sum; tBestV = v; tBestTrig = trig; }
+                }
+                #pragma omp critical
+                {
+                    if (tBestSum > fbBestSum) {
+                        fbBestSum = tBestSum; fbBestV = tBestV; fbBestTrig = tBestTrig;
+                    }
+                }
+            }
+            if (fbBestV < 0) {
+                std::cout << "[cwc] Step " << step
+                          << ": no remaining candidate with any positive c(v,s) — stopping early at "
+                          << finalSelections.size() << "/" << budgetK << std::endl;
+                break;
+            }
+            bestV = fbBestV;
+            bestGain = 0.0f;
+            bestTriggerSample = fbBestTrig;
+            if ((step + 1) % 25 == 0 || step == budgetK - 1 || step == finalSelections.size()) {
+                std::cout << "[cwc] step " << (step + 1) << "/" << budgetK
+                          << "  (Phase B fill, primary saturated)  picked v=" << bestV
+                          << "  raw_conf_sum=" << fbBestSum << std::endl;
+            }
+        } else if ((step + 1) % 25 == 0 || step == budgetK - 1) {
+            std::cout << "[cwc] step " << (step + 1) << "/" << budgetK
+                      << "  picked v=" << bestV
+                      << "  marginal_gain=" << bestGain << std::endl;
         }
 
         finalSelections.push_back({bestV, bestTriggerSample});
@@ -410,12 +462,6 @@ void EAUtils::selectViewPointByConfidenceCoverage(
             float c = confidenceCvs(bestV, s, points, candidatePositions,
                                     dom2, cosThetaT, thetaDenom);
             if (c > 0.0f) H[s] += c;
-        }
-
-        if ((step + 1) % 25 == 0 || step == budgetK - 1) {
-            std::cout << "[cwc] step " << (step + 1) << "/" << budgetK
-                      << "  picked v=" << bestV
-                      << "  marginal_gain=" << bestGain << std::endl;
         }
     }
 
@@ -439,13 +485,22 @@ void EAUtils::selectViewPointByConfidenceCoverage(
         if (h >= hReq * 0.5f) nAboveHalf++;
         if (h <= 0.0f) {
             nZero++;
-            // Partition uncovered samples: structural (no visible candidate at
-            // all — nothing any planner can do) vs algorithmic (visible
-            // candidates existed, CWC simply didn't pick them).
-            bool hasVisibleCand =
-                s < (int)scoreUtils.pointViewVisibilitySet.size() &&
-                !scoreUtils.pointViewVisibilitySet[s].empty();
-            if (hasVisibleCand) nAlgorithmic++; else nStructural++;
+            // Partition uncovered samples: structural (no candidate exists that
+            // would yield positive c(v,s) — CWC literally has nothing to pick)
+            // vs algorithmic (a positive-c candidate existed, CWC just didn't
+            // choose it). Checking only `!pointViewVisibilitySet[s].empty()`
+            // is too lax: visibility is filtered with MAX_D, not dmax + θ_t,
+            // so a visible candidate may still produce c=0 via c_d or c_o.
+            bool hasUsableCand = false;
+            if (s < (int)scoreUtils.pointViewVisibilitySet.size()) {
+                for (int v : scoreUtils.pointViewVisibilitySet[s]) {
+                    if (v < 0 || v >= nCands) continue;
+                    float c = confidenceCvs(v, s, points, candidatePositions,
+                                            dom2, cosThetaT, thetaDenom);
+                    if (c > 0.0f) { hasUsableCand = true; break; }
+                }
+            }
+            if (hasUsableCand) nAlgorithmic++; else nStructural++;
         }
     }
     std::cout << "[cwc] Total selections: " << finalSelections.size() << "/" << budgetK << std::endl;
@@ -459,6 +514,149 @@ void EAUtils::selectViewPointByConfidenceCoverage(
     std::cout << "  H == 0 (uncovered):         " << nZero << "/" << nSamples << std::endl;
     std::cout << "    of which structural (no visible candidate): " << nStructural << std::endl;
     std::cout << "    of which algorithmic (CWC could have picked): " << nAlgorithmic << std::endl;
+}
+
+// =============================================================================
+// Binary-coverage greedy (Proposal §3.1 controlled baseline).
+// Greedy maximisation of Σ_s min(D_base(s), 1[v covers s]) where
+//   D_base(s) = max(0, B_req - B(s)),  B(s) = #{v∈V_sel : v covers s}.
+// "v covers s" means c(v,s) > 0 — same admissibility as CWC, only the
+// per-pair contribution differs (binary 0/1 vs continuous c).
+// =============================================================================
+
+void EAUtils::selectViewPointByBinaryCoverage(
+        ScoreUtils &scoreUtils,
+        std::vector<ViewSelection> &finalSelections,
+        std::vector<SamplePoint> &points,
+        const std::vector<Eigen::Vector3f> &candidatePositions,
+        int budgetK,
+        int bReq) {
+    const int nSamples = (int)points.size();
+    const int nCands   = (int)candidatePositions.size();
+    const float dom2 = std::pow(Params::BEST_DISTANCE - Params::MIN_DISTANCE_BETWEEN_POINT_AND_VIEW, 2);
+    const float cosThetaT = std::cos(Params::THETA_T);
+    const float thetaDelta = 1.0f - cosThetaT;
+    const float thetaDenom = std::max(thetaDelta * thetaDelta, 1e-6f);
+
+    std::vector<int>  B(nSamples, 0);          // binary coverage count B(s)
+    std::vector<bool> selected(nCands, false);
+
+    std::cout << "[bc]  Budget K=" << budgetK << ", B_req=" << bReq
+              << ", candidates=" << nCands << ", samples=" << nSamples << std::endl;
+
+    for (int step = 0; step < budgetK; ++step) {
+        int   bestV = -1;
+        int   bestGain = 0;
+        int   bestTriggerSample = -1;
+        // Phase B fallback: when all reachable B(s) >= B_req, pick v that
+        // covers the most samples (raw |{s : c(v,s)>0}|), regardless of deficit.
+        int   fbBestV = -1;
+        int   fbBestCovered = 0;
+        int   fbBestTrig = -1;
+
+        #pragma omp parallel
+        {
+            int   tBestV = -1, tBestGain = 0, tBestTrig = -1;
+            int   tFbBestV = -1, tFbBestCov = 0, tFbBestTrig = -1;
+
+            #pragma omp for schedule(dynamic, 32) nowait
+            for (int v = 0; v < nCands; ++v) {
+                if (selected[v]) continue;
+                if (v >= (int)scoreUtils.viewPointVisibilitySet.size()) continue;
+                const auto &vis = scoreUtils.viewPointVisibilitySet[v];
+                if (vis.empty()) continue;
+
+                int gain = 0;
+                int covered = 0;
+                int trig = -1; float trigC = -1.0f;
+                for (int s : vis) {
+                    if (s < 0 || s >= nSamples) continue;
+                    float c = confidenceCvs(v, s, points, candidatePositions,
+                                            dom2, cosThetaT, thetaDenom);
+                    if (c <= 0.0f) continue;     // "v covers s" iff c > 0
+                    covered++;
+                    if (B[s] < bReq) gain++;     // contributes to deficit reduction
+                    if (c > trigC) { trigC = c; trig = s; }
+                }
+                if (gain > tBestGain) {
+                    tBestGain = gain; tBestV = v; tBestTrig = trig;
+                }
+                if (covered > tFbBestCov) {
+                    tFbBestCov = covered; tFbBestV = v; tFbBestTrig = trig;
+                }
+            }
+            #pragma omp critical
+            {
+                if (tBestGain > bestGain) {
+                    bestGain = tBestGain; bestV = tBestV; bestTriggerSample = tBestTrig;
+                }
+                if (tFbBestCov > fbBestCovered) {
+                    fbBestCovered = tFbBestCov; fbBestV = tFbBestV; fbBestTrig = tFbBestTrig;
+                }
+            }
+        }
+
+        // Phase A picks if any positive deficit reduction; else Phase B fill.
+        if (bestV < 0 || bestGain <= 0) {
+            if (fbBestV < 0) {
+                std::cout << "[bc]  Step " << step
+                          << ": no remaining candidate with any visible sample — stopping at "
+                          << finalSelections.size() << "/" << budgetK << std::endl;
+                break;
+            }
+            bestV = fbBestV; bestTriggerSample = fbBestTrig;
+            if ((step + 1) % 25 == 0 || step == budgetK - 1) {
+                std::cout << "[bc]  step " << (step + 1) << "/" << budgetK
+                          << "  (Phase B fill, all reachable B reached B_req)  picked v=" << bestV
+                          << "  raw_cover=" << fbBestCovered << std::endl;
+            }
+        } else if ((step + 1) % 25 == 0 || step == budgetK - 1) {
+            std::cout << "[bc]  step " << (step + 1) << "/" << budgetK
+                      << "  picked v=" << bestV
+                      << "  deficit_reduction=" << bestGain << std::endl;
+        }
+
+        finalSelections.push_back({bestV, bestTriggerSample});
+        selected[bestV] = true;
+        // Increment B(s) for each covered sample.
+        for (int s : scoreUtils.viewPointVisibilitySet[bestV]) {
+            if (s < 0 || s >= nSamples) continue;
+            float c = confidenceCvs(bestV, s, points, candidatePositions,
+                                    dom2, cosThetaT, thetaDenom);
+            if (c > 0.0f) B[s] += 1;
+        }
+    }
+
+    // Diagnostic: B(s) histogram + structural vs algorithmic uncovered.
+    int nAtReq = 0, nAtLeastOne = 0, nZero = 0;
+    int nStructural = 0, nAlgorithmic = 0;
+    for (int s = 0; s < nSamples; ++s) {
+        int b = B[s];
+        if (b >= bReq)        nAtReq++;
+        if (b >= 1)           nAtLeastOne++;
+        if (b == 0) {
+            nZero++;
+            bool hasUsableCand = false;
+            if (s < (int)scoreUtils.pointViewVisibilitySet.size()) {
+                for (int v : scoreUtils.pointViewVisibilitySet[s]) {
+                    if (v < 0 || v >= nCands) continue;
+                    if (confidenceCvs(v, s, points, candidatePositions,
+                                      dom2, cosThetaT, thetaDenom) > 0.0f) {
+                        hasUsableCand = true; break;
+                    }
+                }
+            }
+            if (hasUsableCand) nAlgorithmic++; else nStructural++;
+        }
+    }
+    std::cout << "[bc]  Total selections: " << finalSelections.size() << "/" << budgetK << std::endl;
+    std::cout << "[bc]  B(s) distribution over " << nSamples << " samples:" << std::endl;
+    std::cout << "  B >= B_req(" << bReq << "): " << nAtReq << "/" << nSamples
+              << " (" << (100.0f * nAtReq / nSamples) << "%)" << std::endl;
+    std::cout << "  B >= 1:                " << nAtLeastOne << "/" << nSamples << std::endl;
+    std::cout << "  B == 0 (uncovered):    " << nZero << "/" << nSamples << std::endl;
+    std::cout << "    of which structural (no usable candidate): " << nStructural << std::endl;
+    std::cout << "    of which algorithmic (could have picked):   " << nAlgorithmic << std::endl;
 }
 
 // =============================================================================
@@ -528,6 +726,15 @@ EAContext EAUtils::initPopulationWithContext(ScoreUtils &scoreUtils, Map &map,
         selectViewPointByConfidenceCoverage(scoreUtils, ctx.greedySelections,
                                             points, ctx.candidatePositions,
                                             budgetK, hReq);
+    } else if (method == "binary_coverage") {
+        if (budgetK <= 0) {
+            std::cerr << "[init] binary_coverage requires a positive budget K"
+                      << " (set FUXIAN_K); falling back to 200." << std::endl;
+            budgetK = 200;
+        }
+        selectViewPointByBinaryCoverage(scoreUtils, ctx.greedySelections,
+                                        points, ctx.candidatePositions,
+                                        budgetK);
     } else {
         // Default: paper-faithful Yan two-stage with optional K cap.
         selectViewPointByScore(scoreUtils, ctx.greedySelections,
