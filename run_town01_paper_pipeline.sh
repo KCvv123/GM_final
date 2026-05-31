@@ -237,16 +237,24 @@ fi
 if ! skip_step 7; then
     print_step 7 "ACO path planning + Bezier smoothing → CARLA second-pass plan"
 
-    RAW_VIEWPOINTS="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints.txt"
-    ACO_VIEWPOINTS="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints_aco.txt"
-    ACO_SMOOTH_VIEWPOINTS="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints_aco_smooth.txt"
+    # Step 6 (FuXian) writes a method-suffixed file. Match the suffix here so
+    # ACO and the CARLA plan converter consume the planner's actual output
+    # instead of a stale unrelated file that happens to share the default name.
+    METHOD_SUFFIX=""
+    case "${FUXIAN_METHOD:-yan_two_stage}" in
+        confidence_coverage) METHOD_SUFFIX="_cwc" ;;
+        binary_coverage)     METHOD_SUFFIX="_bc" ;;
+    esac
+    RAW_VIEWPOINTS="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints${METHOD_SUFFIX}.txt"
+    ACO_VIEWPOINTS="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints${METHOD_SUFFIX}_aco.txt"
+    ACO_SMOOTH_VIEWPOINTS="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints${METHOD_SUFFIX}_aco_smooth.txt"
 
     python3 aco_tsp.py \
         --input "$RAW_VIEWPOINTS" \
         --out-raw "$ACO_VIEWPOINTS" \
         --out-smooth "$ACO_SMOOTH_VIEWPOINTS" \
-        --out-smith "output/trajectory/${MAP_LOWER}_smith_aco.txt" \
-        --out-smooth-smith "output/trajectory/${MAP_LOWER}_smith_aco_smooth.txt" \
+        --out-smith "output/trajectory/${MAP_LOWER}${METHOD_SUFFIX}_smith_aco.txt" \
+        --out-smooth-smith "output/trajectory/${MAP_LOWER}${METHOD_SUFFIX}_smith_aco_smooth.txt" \
         --ants "${ACO_ANTS:-20}" \
         --iters "${ACO_ITERS:-100}" \
         --alpha "${ACO_ALPHA:-1.0}" \
@@ -262,6 +270,9 @@ if ! skip_step 7; then
     # selected viewpoints into 837 capture poses and break the budget-matched
     # comparison promised by proposal §3.1 ("exactly K second-pass camera poses").
     # The Bezier outputs are still produced above for trajectory visualisation.
+    # Also suffix the plan path by method so Yan / binary_coverage / CWC runs
+    # don't overwrite each other (Step 8 inherits this updated value).
+    SECOND_PASS_PLAN="$DATA_ROOT/second_pass_plan${METHOD_SUFFIX}.json"
     python3 scripts/05_fuxian_to_carla_plan.py \
         --input  "$ACO_VIEWPOINTS" \
         --output "$SECOND_PASS_PLAN" \

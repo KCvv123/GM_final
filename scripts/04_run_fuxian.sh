@@ -69,13 +69,17 @@ echo ""
 
 FUXIAN_TAG="${MAP_LOWER}" FUXIAN_NAME="${FUXIAN_NAME:-${MAP_LOWER}_viewpoints}" ./build/FuXian
 
-# main.cpp appends "_cwc" to FUXIAN_NAME when FUXIAN_METHOD=confidence_coverage,
-# so the script must inspect the same suffixed file (or it would silently report
-# stats for the previous baseline run that happened to be sitting in the dir).
+# main.cpp suffixes FUXIAN_NAME by FUXIAN_METHOD:
+#   confidence_coverage -> _cwc
+#   binary_coverage     -> _bc
+#   (yan_two_stage / unset -> no suffix)
+# The script must mirror the same suffix when inspecting the produced file,
+# otherwise it would silently report stats for an unrelated stale file.
 SUFFIX=""
-if [[ "${FUXIAN_METHOD:-}" == "confidence_coverage" ]]; then
-    SUFFIX="_cwc"
-fi
+case "${FUXIAN_METHOD:-}" in
+    confidence_coverage) SUFFIX="_cwc" ;;
+    binary_coverage)     SUFFIX="_bc"  ;;
+esac
 
 echo ""
 VIEWPOINTS_FILE="output/${MAP_LOWER}/${MAP_LOWER}_viewpoints${SUFFIX}.txt"
