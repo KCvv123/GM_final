@@ -35,6 +35,10 @@
 #
 #   # Resume from a specific step:
 #   START_STEP=5 ./run_town01_paper_pipeline.sh
+#
+#   # Stop after a specific step (e.g. only generate the plan, no CARLA capture):
+#   START_STEP=6 STOP_STEP=7 FUXIAN_METHOD=confidence_coverage FUXIAN_K=210 \
+#       ./run_town01_paper_pipeline.sh
 # =============================================================================
 
 set -euo pipefail
@@ -43,6 +47,7 @@ cd "$REPO"
 
 # ---- Config (override via env vars) ----------------------------------------
 START_STEP="${START_STEP:-1}"
+STOP_STEP="${STOP_STEP:-99}"   # inclusive upper bound; use e.g. 7 to stop after plan generation
 MAP="${MAP:-Town01}"
 MAP_LOWER=$(echo "$MAP" | tr '[:upper:]' '[:lower:]')
 DATA_ROOT="${DATA_ROOT:-$HOME/safe_repos/117-paper-data-${MAP_LOWER}}"
@@ -77,6 +82,7 @@ print_step() {
 
 skip_step() {
     [[ $1 -lt $START_STEP ]] && echo "[skip] Step $1 (START_STEP=$START_STEP)" && return 0
+    [[ $1 -gt $STOP_STEP ]]  && echo "[stop] Step $1 (STOP_STEP=$STOP_STEP)"   && return 0
     return 1
 }
 
