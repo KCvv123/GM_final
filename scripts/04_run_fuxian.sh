@@ -67,7 +67,7 @@ echo "  mesh:    $(wc -c < "data/${MAP_LOWER}_mesh.ply") bytes"
 echo "  samples: $(wc -l < "data/${MAP_LOWER}_samples.ply") lines"
 echo ""
 
-FUXIAN_TAG="${MAP_LOWER}" FUXIAN_NAME="${MAP_LOWER}_viewpoints" ./build/FuXian
+FUXIAN_TAG="${MAP_LOWER}" FUXIAN_NAME="${FUXIAN_NAME:-${MAP_LOWER}_viewpoints}" ./build/FuXian
 
 # main.cpp appends "_cwc" to FUXIAN_NAME when FUXIAN_METHOD=confidence_coverage,
 # so the script must inspect the same suffixed file (or it would silently report

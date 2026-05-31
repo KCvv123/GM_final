@@ -7,6 +7,8 @@ build/
 # Generated data (large PLY meshes, dense clouds, samples)
 # Keep hand-crafted JSON capture plans (data/*_first_pass_plan.json)
 data/*.ply
+# Auto-generated capture plans (regenerable via scripts/05_fuxian_to_carla_plan.py)
+data/plans/
 
 # Pipeline outputs (viewpoints, trajectories, intermediate text)
 output/
