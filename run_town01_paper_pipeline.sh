@@ -287,7 +287,7 @@ if ! skip_step 7; then
         --output "$SECOND_PASS_PLAN" \
         --map    "$MAP" \
         --preserve-order \
-        --one-group-per-waypoint
+        --single-group-per-waypoint-orientation
 
     echo "[step7] Second-pass plan: $SECOND_PASS_PLAN"
 fi
