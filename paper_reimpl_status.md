@@ -96,7 +96,8 @@ Last updated: 2026-05-06.
   3. `run_town01_paper_pipeline.sh` Step 7 calls `aco_tsp.py` before CARLA plan conversion.
   4. `scripts/05_fuxian_to_carla_plan.py` supports `--preserve-order` and `--one-group-per-waypoint`, so it does not undo ACO/Bezier ordering and can preserve per-viewpoint z under the existing CARLA plan schema.
 - **Open-path decision:** implemented as open Hamiltonian ordering because the paper does not state UAV return-to-start and the CARLA capture mission is naturally open. This is documented as an assumption.
-- **Verification:** handcrafted 5-viewpoint check passed 2026-05-06; ACO reduced cost, Bezier output had expected line count, CARLA JSON was generated in preserve-order mode.
+- **K-budget decision (added 2026-05-31):** `run_town01_paper_pipeline.sh` Step 7 feeds the ACO-ordered raw viewpoints (`*_aco.txt`, K poses) into `05_fuxian_to_carla_plan.py`, **not** the Bezier-smoothed expansion (`*_aco_smooth.txt`, ~4·K poses). CARLA teleports between waypoints rather than simulating drone dynamics, so the Bezier expansion would inflate the capture-pose count by ≈4× and break the K-matched comparison promised by the course proposal §3.1 ("exactly K second-pass camera poses"). The smoothed file is still produced for trajectory visualisation.
+- **Verification:** handcrafted 5-viewpoint check passed 2026-05-06; town01 K=210 plan regenerated 2026-05-31 (Yan + CWC H_req=1.0), both produced 210 groups / 210 waypoints as expected.
 
 #### B6. Normal/location clusters (Section 3.2.2)
 - **Where:** would live in `code/entity/map.cpp` (after `initOBB`)

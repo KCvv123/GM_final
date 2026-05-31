@@ -256,8 +256,14 @@ if ! skip_step 7; then
         --smooth-tension "${ACO_SMOOTH_TENSION:-0.35}" \
         --seed "${ACO_SEED:-42}"
 
+    # Feed the ACO-ordered viewpoints (NOT the Bezier-smoothed expansion) into the
+    # CARLA capture plan: CARLA teleports between waypoints rather than simulating
+    # drone dynamics, so the 4-sample-per-segment Bezier inflation would turn K=210
+    # selected viewpoints into 837 capture poses and break the budget-matched
+    # comparison promised by proposal §3.1 ("exactly K second-pass camera poses").
+    # The Bezier outputs are still produced above for trajectory visualisation.
     python3 scripts/05_fuxian_to_carla_plan.py \
-        --input  "$ACO_SMOOTH_VIEWPOINTS" \
+        --input  "$ACO_VIEWPOINTS" \
         --output "$SECOND_PASS_PLAN" \
         --map    "$MAP" \
         --preserve-order \
