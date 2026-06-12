@@ -1,0 +1,4 @@
+method,points,samples,sample_src,accuracy,completeness,occupied_voxels,mean_raw_g,mean_gc,mean_gs
+fuxian,3444000,4000,voxel-uniform(107495 cells),0.070232,0.845754,107651,359.791182,3.484911,127.016350
+bc,5230027,4000,voxel-uniform(105681 cells),0.097358,0.833153,106047,498.757487,3.459491,196.132041
+cwc,3800234,4000,voxel-uniform(106980 cells),0.078261,0.841096,107058,400.924181,3.479388,148.661418

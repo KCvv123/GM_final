@@ -1,0 +1,3 @@
+method,points,samples,sample_src,accuracy,completeness,occupied_voxels,mean_raw_g,mean_gc,mean_gs
+firstpass,2784297,4000,mesh,0.261269,0.845551,89220,186.409809,1.742140,71.860416
+bc,842862,4000,mesh,0.131704,0.687965,72592,93.967897,2.414066,29.013433
